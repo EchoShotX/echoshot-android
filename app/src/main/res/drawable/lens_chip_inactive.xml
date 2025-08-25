@@ -1,0 +1,8 @@
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#22FFFFFF">
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#66FFFFFF"/> <!-- 40% 흰색(반투명) -->
+        </shape>
+    </item>
+</ripple>

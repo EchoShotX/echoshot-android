@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 바운딩 박스 색상 (연두색) -->
+    <color name="bounding_box_color">#FF00FF00</color>
+
+    <!-- 기타 예시 색상들 -->
+    <color name="icPressed">#FFAAAAAA</color>
+    <color name="icFocused">#FFCCCCCC</color>
+    <color name="icActive">#FFFFFFFF</color>
+</resources>

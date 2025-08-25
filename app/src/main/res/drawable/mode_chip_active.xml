@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#424a44" /> <!-- 활성화 색상 (원하는 컬러로 변경 가능) -->
+    <corners android:radius="20dp" />         <!-- 둥근 모서리 -->
+    <padding
+        android:left="12dp"
+        android:top="6dp"
+        android:right="12dp"
+        android:bottom="6dp" />
+</shape>

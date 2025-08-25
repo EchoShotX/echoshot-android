@@ -1,0 +1,957 @@
+package com.echoshot.app.fragments
+
+import android.app.AlertDialog
+import android.content.ContentUris
+import android.content.ContentValues
+import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.media.MediaMetadataRetriever
+import android.media.MediaScannerConnection
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Log
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.ProgressBar
+import android.widget.RadioGroup
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.widget.AppCompatImageView
+import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import androidx.navigation.fragment.findNavController
+import androidx.navigation.fragment.navArgs
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.bumptech.glide.Glide
+import com.chaquo.python.Python
+import com.echoshot.app.R
+import com.echoshot.app.VideoPipeline
+import com.echoshot.app.databinding.FragmentGalleryBinding
+import com.echoshot.app.databinding.GalleryItemBinding
+import com.echoshot.app.databinding.ItemDateHeaderBinding
+import com.echoshot.app.fragments.GalleryFragment.SectionedAdapter.Companion.TYPE_HEADER
+import com.echoshot.app.fragments.GalleryFragment.SectionedAdapter.Companion.TYPE_VIDEO
+import com.google.android.material.button.MaterialButtonToggleGroup
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.*
+import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
+import android.annotation.SuppressLint
+import androidx.documentfile.provider.DocumentFile
+import com.echoshot.app.LogFormat
+import com.echoshot.app.mp4detact.DetectLogManager
+import com.echoshot.app.mp4detact.GlCtx
+import com.echoshot.app.mp4detact.JsonLogger
+import com.echoshot.app.mp4detact.LogOrchestrator
+import com.echoshot.app.mp4detact.VideoDetectFacade
+import java.io.FileNotFoundException
+import kotlinx.coroutines.*
+import kotlinx.coroutines.asCoroutineDispatcher
+import java.util.concurrent.Executors
+
+
+// 1) 리스트에 들어갈 두 가지 타입
+private sealed class ListItem {
+    data class Header(val label: String) : ListItem()
+    data class Video(
+        val uri: Uri,
+        val durationMs: Long,
+        val uuid: String,
+        val type: String,      // "zoomed" | "original" | "cropped"
+        val locked: Boolean = false,
+        val croppedCount: Int = 0
+    ) : ListItem()
+    object Placeholder : ListItem()
+}
+
+// 파일 상단 class 바깥 or 클래스 내부 상단에 추가
+private enum class GalleryMode { BASIC, EXTENDED }
+
+class GalleryFragment : Fragment() {
+
+    private var sectionedItems: List<ListItem> = emptyList()
+    private var _binding: FragmentGalleryBinding? = null
+    private val binding get() = _binding!!
+    private val args: GalleryFragmentArgs by navArgs()
+
+    // Fragment 필드로 한 번만 만들기(재사용)
+    private lateinit var glCtx: GlCtx
+
+    private var mode: GalleryMode = GalleryMode.BASIC
+
+    private fun getVideoDurationMs(ctx: Context, uri: Uri): Long {
+        val r = MediaMetadataRetriever()
+        return try {
+            r.setDataSource(ctx, uri)
+            (r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0L)
+        } finally { r.release() }
+    }
+
+    private fun estimateSeconds(durationMs: Long): Int {
+        val sec = durationMs / 1000.0
+        return (2.0 + sec / 3.0).roundToInt()
+    }
+
+    private fun estimateSecondsHigh(durationMs: Long): Int {
+        val sec = durationMs / 1000.0
+        return (2.0 + sec * 10.0).roundToInt()
+    }
+
+    private fun copyUriToFile(ctx: Context, src: Uri, dst: File) {
+        ctx.contentResolver.openInputStream(src)!!.use { inp ->
+            FileOutputStream(dst).use { out -> inp.copyTo(out) }
+        }
+    }
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?,
+                              savedInstanceState: Bundle?) : View {
+        _binding = FragmentGalleryBinding.inflate(inflater, container, false)
+        return binding.root
+    }
+
+    @SuppressLint("SetTextI18n")
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+
+        glCtx = GlCtx()
+
+        binding.backIcon.setOnClickListener { findNavController().navigateUp() }
+
+        // 1) 초기 모드: 네비게이션 인자대로
+        val startBasic = args.startBasic
+        mode = if (startBasic) GalleryMode.BASIC else GalleryMode.EXTENDED
+        setActiveTab(isBasic = startBasic)   // 버튼 색/테두리 갱신
+        reloadForMode(startBasic)            // 리스트 로딩
+
+        // 2) 그리드 레이아웃 (헤더 span은 확장 모드일 때만 3칸)
+        val glm = GridLayoutManager(requireContext(), 3)
+        glm.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+            override fun getSpanSize(position: Int): Int {
+                val item = sectionedItems.getOrNull(position)
+                return when (mode) {
+                    GalleryMode.BASIC -> 1
+                    GalleryMode.EXTENDED -> when (item) {
+                        is ListItem.Header      -> 3
+                        is ListItem.Video       -> 1
+                        is ListItem.Placeholder -> 1
+                        else                    -> 1
+                    }
+                }
+            }
+        }
+        binding.galleryRecyclerView.layoutManager = glm
+
+        // 3) 탭 전환
+        binding.btnGallery.setOnClickListener {
+            if (mode != GalleryMode.BASIC) {
+                mode = GalleryMode.BASIC
+                setActiveTab(isBasic = true)
+                reloadForMode(true)
+            }
+        }
+        binding.btnExtendedGallery.setOnClickListener {
+            if (mode != GalleryMode.EXTENDED) {
+                mode = GalleryMode.EXTENDED
+                setActiveTab(isBasic = false)
+                reloadForMode(false)
+            }
+        }
+    }
+
+
+    private fun reloadForMode(isBasic: Boolean? = null) {
+        // 전달된 파라미터가 있으면 mode 업데이트
+        isBasic?.let { mode = if (it) GalleryMode.BASIC else GalleryMode.EXTENDED }
+
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val items: List<ListItem> = when (mode) {
+                GalleryMode.BASIC    -> loadBasicItems()   // 시간순 단순 리스트
+                GalleryMode.EXTENDED -> loadVideoItems()   // 기존(섹션/잠금/크롭) 리스트
+            }
+
+            withContext(Dispatchers.Main) {
+                sectionedItems = items
+
+                binding.galleryRecyclerView.adapter = SectionedAdapter(
+                    items,
+                    onItemClick = { v ->
+                        // BASIC: 바로 플레이어 / EXTENDED: 기존 동작 유지
+                        if (mode == GalleryMode.EXTENDED && v.type == "cropped") {
+                            CroppedPagerDialogFragment
+                                .newInstance(v.uuid)
+                                .show(childFragmentManager, "croppedPager")
+                        } else {
+                            findNavController().navigate(
+                                GalleryFragmentDirections
+                                    .actionGalleryFragmentToPreviewPlayerFragment(v.uri.toString())
+                            )
+                        }
+                    },
+                    onLockedClick = { v ->
+                        if (mode == GalleryMode.EXTENDED) showLockedOverlay(v.uri)
+                        // BASIC에선 잠금 개념 없음
+                    }
+                )
+            }
+        }
+    }
+
+    private fun setActiveTab(isBasic: Boolean) {
+        val white = Color.WHITE
+        val gray  = Color.GRAY
+        binding.btnGallery.setTextColor(if (isBasic) white else gray)
+        binding.btnExtendedGallery.setTextColor(if (isBasic) gray else white)
+        binding.btnGallery.strokeColor        = ColorStateList.valueOf(if (isBasic) white else gray)
+        binding.btnExtendedGallery.strokeColor= ColorStateList.valueOf(if (isBasic) gray else white)
+    }
+
+    private fun loadBasicItems(): List<ListItem> {
+        val result = mutableListOf<ListItem>()
+        val proj = arrayOf(
+            MediaStore.Video.Media._ID,
+            MediaStore.Video.Media.DATE_TAKEN,
+            MediaStore.Video.Media.DURATION,
+            MediaStore.Video.Media.DATA
+        )
+        val sel = "${MediaStore.Video.Media.DATA} LIKE ?"
+        val selArgs = arrayOf("%/DCIM/Camera2App/%")
+        val sort = "${MediaStore.Video.Media.DATE_TAKEN} DESC"
+
+        requireContext().contentResolver.query(
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+            proj, sel, selArgs, sort
+        )?.use { c ->
+            val idCol  = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+            val durCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+            while (c.moveToNext()) {
+                val id  = c.getLong(idCol)
+                val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                val dur = c.getLong(durCol)
+                // 어댑터 재사용: uuid는 빈값, type은 임의(재생만 하면 되니까 "original")
+                result += ListItem.Video(uri = uri, durationMs = dur, uuid = "", type = "original")
+            }
+        }
+        return result
+    }
+
+
+    override fun onDestroyView() {
+        try { glCtx.release() } catch (_: Throwable) {}
+        super.onDestroyView()
+        _binding = null
+    }
+
+    /** MediaStore 에서 DATe_TAKEN 도 함께 가져와 ListItem.Video 로 변환 */
+    private fun loadVideoItems(): List<ListItem> {
+        data class MediaItem(
+            val uri: Uri,
+            val dateTaken: Long,
+            val durationMs: Long,
+            val uuid: String,
+            val type: String, // "zoomed" | "original" | "cropped"
+            val croppedCount: Int = 0
+        )
+
+        val items = mutableListOf<MediaItem>()
+        val proj = arrayOf(
+            MediaStore.Video.Media._ID,
+            MediaStore.Video.Media.DISPLAY_NAME,
+            MediaStore.Video.Media.DATE_TAKEN,
+            MediaStore.Video.Media.DURATION
+        )
+
+        // 기존: val sel = "${MediaStore.Video.Media.DATA} LIKE ?"
+        // ↓ 전면(파일명 시작이 VID_front_)을 제외
+        val sel = "${MediaStore.Video.Media.DATA} LIKE ? AND ${MediaStore.Video.Media.DISPLAY_NAME} NOT LIKE ?"
+        val selArgs = arrayOf("%/DCIM/Camera2App/%", "VID_front_%")
+
+        val sort = "${MediaStore.Video.Media.DATE_TAKEN} DESC"
+
+        requireContext().contentResolver.query(
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+            proj, sel, selArgs, sort
+        )?.use { c ->
+            val idCol   = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+            val nameCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+            val dateCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_TAKEN)
+            val durCol  = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+            while (c.moveToNext()) {
+                val id   = c.getLong(idCol)
+                val name = c.getString(nameCol) // e.g. "VID_<uuid>_cropped_..."
+                val parts = name.split('_')
+                if (parts.size < 3) continue
+                val uuid = parts[1]
+                val type = parts[2] // zoomed | original | cropped
+                val uri  = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                items += MediaItem(uri, c.getLong(dateCol), c.getLong(durCol), uuid, type)
+            }
+        }
+
+        // 날짜 라벨링
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY,0); set(Calendar.MINUTE,0)
+            set(Calendar.SECOND,0); set(Calendar.MILLISECOND,0)
+        }
+        val todayStart = cal.timeInMillis
+        val yesterdayStart = todayStart - TimeUnit.DAYS.toMillis(1)
+        val sdf = SimpleDateFormat("yyyy.MM.dd", Locale.getDefault())
+
+        val sections = linkedMapOf<String, MutableList<MediaItem>>()
+        items.forEach { mi ->
+            val label = when {
+                mi.dateTaken >= todayStart     -> "오늘"
+                mi.dateTaken >= yesterdayStart -> "어제"
+                else                            -> sdf.format(Date(mi.dateTaken))
+            }
+            sections.getOrPut(label) { mutableListOf() } += mi
+        }
+
+        // 섹션 → UUID 묶음 → 3칸(zoomed, original, cropped/locked/placeholder)
+        val result = mutableListOf<ListItem>()
+        for ((label, list) in sections) {
+            result += ListItem.Header(label)
+
+            val byUuid: Map<String, List<MediaItem>> = list.groupBy { it.uuid }
+            byUuid.values.forEach { group ->
+                val zoomed   = group.find { it.type == "zoomed" }
+                val original = group.find { it.type == "original" }
+
+                val croppedList = group.filter { it.type == "cropped" }
+                val cropped     = croppedList.maxByOrNull { it.dateTaken }
+                val croppedCnt  = croppedList.size
+
+                // 1) 왼쪽: zoomed (없으면 Placeholder)
+                result += if (zoomed != null) {
+                    ListItem.Video(
+                        uri = zoomed.uri,
+                        durationMs = zoomed.durationMs,
+                        uuid = zoomed.uuid,
+                        type = "zoomed",
+                        locked = false
+                    )
+                } else {
+                    ListItem.Placeholder
+                }
+
+                // 2) 가운데: original (없으면 Placeholder)
+                result += if (original != null) {
+                    ListItem.Video(
+                        uri = original.uri,
+                        durationMs = original.durationMs,
+                        uuid = original.uuid,
+                        type = "original",
+                        locked = false
+                    )
+                } else {
+                    ListItem.Placeholder
+                }
+
+                // 3) 오른쪽: cropped or lock/placeholder
+                result += when {
+                    cropped != null -> ListItem.Video(
+                        uri = cropped.uri,
+                        durationMs = cropped.durationMs,
+                        uuid = cropped.uuid,
+                        type = "cropped",
+                        locked = false,
+                        croppedCount = croppedCnt       // ★ 여기!
+                    )
+                    original != null -> ListItem.Video(
+                        uri = original.uri,
+                        durationMs = original.durationMs,
+                        uuid = original.uuid,
+                        type = "original",
+                        locked = true
+                    )
+                    else -> ListItem.Placeholder
+                }
+            }
+        }
+        return result
+    }
+
+
+    companion object {
+        private const val TAG = "GalleryFragment"
+    }
+
+    fun showLockedOverlay(uri: Uri) {
+        Log.d(TAG, "▶ showLockedOverlay 호출: uri=$uri")
+
+        val dialogView = layoutInflater.inflate(R.layout.dialog_locked_thumbnail, null)
+        val iv = dialogView.findViewById<ImageView>(R.id.lockedThumbnail)
+        val btn = dialogView.findViewById<Button>(R.id.startButton)
+        val toggleGroup = dialogView.findViewById<MaterialButtonToggleGroup>(R.id.toggleCropMode)
+
+        // 썸네일 로딩
+        Glide.with(this).load(uri).centerCrop().into(iv)
+
+        // 1) DISPLAY_NAME → uuid 추출
+        val fileName = requireContext().contentResolver
+            .query(uri, arrayOf(MediaStore.Video.Media.DISPLAY_NAME), null, null, null)
+            ?.use { c ->
+                if (c.moveToFirst())
+                    c.getString(c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME))
+                        .substringBeforeLast('.')
+                else null
+            } ?: run {
+            Log.e(TAG, "DISPLAY_NAME 조회 실패: $uri")
+            Toast.makeText(requireContext(), "파일명을 가져올 수 없습니다.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val parts = fileName.split('_')
+        if (parts.size < 2) {
+            Toast.makeText(requireContext(), "잘못된 파일명: $fileName", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val sessionUuid = parts[1]
+
+        // 2) 사용할 비디오: zoomed 우선, 없으면 클릭한 uri
+        val zoomedPrefix = fileName.substringBefore("_original_") + "_zoomed_" // "VID_<uuid>_zoomed_"
+        val zoomedUri = findMediaUri(requireContext(), zoomedPrefix, "mp4")
+        val baseUriToProcess = zoomedUri ?: uri
+        Log.d(TAG, "baseUriToProcess=$baseUriToProcess")
+
+        // 2) 사용할 비디오: original 우선, 없으면 클릭한 uri
+        val originalPrefix = fileName.substringBefore("_zoomed_") + "_original_"  // "VID_<uuid>_original_"
+        val originalUri = findMediaUri(requireContext(), originalPrefix, "mp4")
+
+
+
+        val dialog = AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .create().apply {
+                window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            }
+
+        // ▼ 추가: 트래킹 토글 참조 및 기본 선택
+        val toggleTrack = dialogView.findViewById<MaterialButtonToggleGroup>(R.id.toggleTrackMode)
+// 기본값: 인물중심 + 저사양
+        if (toggleGroup.checkedButtonId == View.NO_ID) toggleGroup.check(R.id.btnCenterMode)
+        if (toggleTrack.checkedButtonId == View.NO_ID) toggleTrack.check(R.id.btnLowSpec)
+
+        // ETA 계산 + 시작 버튼 라벨 갱신 함수
+        fun updateStartLabel() {
+            val isHigh = (toggleTrack.checkedButtonId == R.id.btnHighSpec)
+
+            val etaMsTarget = if (isHigh) {
+                // 고사양 ETA는 감지용(=로그 생성용) 비디오 길이 기준
+                val videoUriForDetect =
+                    findMediaUri(requireContext(), "VID_${sessionUuid}_original_", "mp4")
+                        ?: findMediaUri(requireContext(), "VID_${sessionUuid}_zoomed_", "mp4")
+                        ?: baseUriToProcess
+                getVideoDurationMs(requireContext(), videoUriForDetect)
+            } else {
+                // 저사양 ETA는 실제 자를 base 영상 길이 기준
+                getVideoDurationMs(requireContext(), baseUriToProcess)
+            }
+
+            val etaSec = if (isHigh) {
+                estimateSecondsHigh(etaMsTarget)   // ★ 고사양: 2 + sec*10
+            } else {
+                estimateSeconds(etaMsTarget)       // ★ 저사양: 2 + sec/3
+            }
+
+            val modeText = if (isHigh) "고사양" else "저사양"
+            btn.text = "시작 ($modeText)\n예상시간: ${etaSec}초"
+        }
+
+
+        // 최초 1회 갱신 + 토글 변경 시 갱신
+        updateStartLabel()
+        toggleTrack.addOnButtonCheckedListener { _, _, _ -> updateStartLabel() }
+        toggleGroup.addOnButtonCheckedListener { _, _, _ -> updateStartLabel() }
+
+        // ▼ 단일 시작 버튼
+        btn.setOnClickListener {
+            val paddingFactor = when (toggleGroup.checkedButtonId) {
+                R.id.btnCenterMode -> 2f   // 인물중심
+                R.id.btnWideMode   -> 3f   // 와이드
+                else               -> 2f
+            }
+            val isHigh = (toggleTrack.checkedButtonId == R.id.btnHighSpec)
+            Log.d(TAG, "Start clicked: mode=${if (isHigh) "high" else "low"}, padding=$paddingFactor")
+            dialog.dismiss() // 공통: 오버레이 닫기 (블로킹 진행 다이얼로그는 따로 표시)
+
+            if (!isHigh) {
+                // ===== 저사양: 기존 로그 사용해 바로 크롭 =====
+                startCropFromBase(baseUriToProcess, paddingFactor)
+                return@setOnClickListener
+            }
+
+            // ===== 고사양: 로그 2종 생성+병합 후 즉시 크롭 =====
+            val videoUriForDetect =
+                findMediaUri(requireContext(), "VID_${sessionUuid}_original_", "mp4")
+                    ?: findMediaUri(requireContext(), "VID_${sessionUuid}_zoomed_", "mp4")
+                    ?: baseUriToProcess
+
+            val trackingUri = findMediaUri(requireContext(), "tracking_log_${sessionUuid}", "json")
+            val tsUri       = findMediaUri(requireContext(), "tracking_log_${sessionUuid}_frame_ts", "json")
+
+            val durMs = getVideoDurationMs(requireContext(), videoUriForDetect)
+            val etaSec = estimateSecondsHigh(durMs)
+            showBlockingProgress(etaSec)
+
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val res = LogOrchestrator.makeBothLogsAndMerge(
+                        ctx = requireContext(),
+                        sessionUuid = sessionUuid,
+                        videoUriForDetect = videoUriForDetect,
+                        trackingUri = trackingUri,
+                        tsUri = tsUri,
+                        filesDir = requireContext().filesDir,
+                        onStage = { stage, note -> Log.d("LogOrchestrator", "stage=$stage note=$note") }
+                    )
+
+                    val mergedLogUri = res.mergedOutUri
+
+                    // 자를 영상 FPS(zoomed → detect대상 → 30)
+                    val fpsForCrop =
+                        getVideoFps(requireContext(), baseUriToProcess)
+                            ?: getVideoFps(requireContext(), videoUriForDetect)
+                            ?: 30
+
+                    val mergedFile: File = when (mergedLogUri.scheme) {
+                        "file" -> File(mergedLogUri.path!!)
+                        else   -> File(requireContext().filesDir, "${sessionUuid}_merged.jsonl")
+                            .also { copyUriToFile(requireContext(), mergedLogUri, it) }
+                    }
+
+                    val outVideoUri = cropVideoFromLog(
+                        sessionUuid       = sessionUuid,
+                        outputJson        = mergedFile,
+                        videoUriToProcess = baseUriToProcess,  // zoomed 우선으로 선택된 대상
+                        fps               = fpsForCrop,
+                        paddingFactor     = paddingFactor,     // ▲ 인물/와이드 선택값 반영
+                        logFormat         = LogFormat.MERGED_JSONL
+                    )
+
+                    withContext(Dispatchers.Main) {
+                        dismissBlockingProgress()
+                        Toast.makeText(requireContext(), "로그 2종+병합+크롭 완료!", Toast.LENGTH_SHORT).show()
+                        // 필요하면 즉시 갤러리 갱신
+                        refreshGallery()
+                    }
+                } catch (e: Throwable) {
+                    Log.e("LogOrchestrator", "failed", e)
+                    withContext(Dispatchers.Main) {
+                        dismissBlockingProgress()
+                        AlertDialog.Builder(requireContext())
+                            .setMessage("로그 생성/병합 실패:\n${e.message}")
+                            .setPositiveButton("닫기", null)
+                            .show()
+                    }
+                }
+            }
+        }
+
+
+        dialog.show()
+        val widthPx = (300 * resources.displayMetrics.density).toInt()
+        dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun getVideoFps(ctx: Context, uri: Uri): Int? {
+        return try {
+            val retriever = MediaMetadataRetriever()
+            retriever.setDataSource(ctx, uri)
+            // API/컨테이너별로 다를 수 있어 폴백 다단계
+            val frameRate = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE
+            )?.toFloatOrNull()
+            (frameRate ?: retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT
+            )?.toFloatOrNull()?.let { frameCount ->
+                val durMs = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_DURATION
+                )?.toLongOrNull() ?: return null
+                if (durMs > 0) frameCount * 1000f / durMs else null
+            })?.roundToInt()
+        } catch (_: Throwable) { null }
+    }
+
+    // 1) 로그 생성 전용
+    private suspend fun generateLogFromSession(
+        sessionUuid: String,
+        trackingUri: Uri?,
+        tsUri: Uri?,
+        filesDir: File
+    ): File {
+        val trackingFile = File(filesDir, "${sessionUuid}_tracking.json")
+        val tsFile       = File(filesDir, "${sessionUuid}_frame_ts.json")
+        val outputJson   = File(filesDir, "${sessionUuid}_processed.json")
+
+        fun copyUriToFile(src: Uri?, dst: File) {
+            if (src == null) return
+            requireContext().contentResolver.openInputStream(src)?.use { inp ->
+                FileOutputStream(dst).use { out -> inp.copyTo(out) }
+            }
+        }
+
+        copyUriToFile(trackingUri, trackingFile)
+        copyUriToFile(tsUri, tsFile)
+
+        // Python 실행 → 로그 생성
+        val py  = Python.getInstance()
+        val mod = py.getModule("make_log_pipeline")
+        mod.callAttr(
+            "process_video",
+            trackingFile.absolutePath,
+            tsFile.absolutePath,
+            outputJson.absolutePath,
+            0.2
+        )
+
+        return outputJson
+    }
+
+    // 2) 크롭 전용
+    private suspend fun cropVideoFromLog(
+        sessionUuid: String,
+        outputJson: File,
+        videoUriToProcess: Uri,
+        fps: Int,
+        paddingFactor: Float,
+        logFormat: LogFormat  = LogFormat.PROCESSED_JSON
+    ): Uri? {
+        val sid = sessionUuid
+        return VideoPipeline.processSessionFromLog(
+            context = requireContext(),
+            sessionId = sid,
+            srcVideoUri = videoUriToProcess,
+            fps = fps,
+            paddingFactor = paddingFactor,
+            logFile = outputJson,
+            format = logFormat
+        )
+    }
+
+    // 3) 전체 실행
+    fun startCropFromBase(baseUri: Uri, paddingFactor: Float) {
+        // 1) sessionUuid 추출
+        val fileName = requireContext().contentResolver
+            .query(baseUri, arrayOf(MediaStore.Video.Media.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst())
+                c.getString(c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME))
+                    .substringBeforeLast('.') else null } ?: run {
+            Toast.makeText(requireContext(), "파일명을 가져올 수 없습니다.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val parts = fileName.split('_')
+        if (parts.size < 2) {
+            Toast.makeText(requireContext(), "잘못된 파일명: $fileName", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val sessionUuid = parts[1]
+
+        // ETA 계산
+        val durMs = getVideoDurationMs(requireContext(), baseUri)
+        val etaSec = estimateSeconds(durMs)
+
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
+            showBlockingProgress(etaSec)
+        }
+
+        // 2) 실행
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val filesDir = requireContext().filesDir
+                val trackingUri = findMediaUri(requireContext(), "tracking_log_${sessionUuid}", "json")
+                val tsUri       = findMediaUri(requireContext(), "tracking_log_${sessionUuid}_frame_ts", "json")
+
+                // zoomed 우선
+                val zoomedPrefix = fileName.substringBefore("_original_") + "_zoomed_"
+                val zoomedUri    = findMediaUri(requireContext(), zoomedPrefix, "mp4")
+                val videoUriToProcess = zoomedUri ?: baseUri
+
+                // ① 로그 생성
+                val outputJson = generateLogFromSession(sessionUuid, trackingUri, tsUri, filesDir)
+
+                // ② 크롭 실행
+                val croppedUri = cropVideoFromLog(sessionUuid, outputJson, videoUriToProcess, args.fps, paddingFactor)
+
+                withContext(Dispatchers.Main) {
+                    dismissBlockingProgress()
+                    if (croppedUri != null) {
+                        Toast.makeText(requireContext(),"크롭 완료!", Toast.LENGTH_SHORT).show()
+                        refreshGallery()
+                    } else {
+                        Toast.makeText(requireContext(),"크롭 실패",Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    dismissBlockingProgress()
+                    AlertDialog.Builder(requireContext())
+                        .setMessage("처리 중 오류가 발생했습니다:\n${e.message}")
+                        .setPositiveButton("닫기", null)
+                        .show()
+                }
+            }
+        }
+    }
+
+    fun findMediaUri(
+        context: Context,
+        prefix: String,
+        extension: String
+    ): Uri? {
+        // 확장자에 따라 적절한 컬렉션 선택
+        val (collection, nameCol) = when (extension.lowercase()) {
+            "mp4" -> Pair(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                MediaStore.Video.Media.DISPLAY_NAME
+            )
+            "json" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                Pair(
+                    MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    MediaStore.MediaColumns.DISPLAY_NAME
+                ) else
+                Pair(
+                    MediaStore.Files.getContentUri("external"),
+                    MediaStore.MediaColumns.DISPLAY_NAME
+                )
+            else -> return null
+        }
+
+        // DISPLAY_NAME LIKE 'prefix%.extension'
+        val sel = "$nameCol LIKE ?"
+        val selArgs = arrayOf("${prefix}%.$extension")
+        val proj = arrayOf(MediaStore.MediaColumns._ID)
+
+        Log.d(TAG, "▶ findMediaUri: 검색조건 $nameCol LIKE '${selArgs[0]}'")
+
+        return context.contentResolver.query(collection, proj, sel, selArgs, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val id = cursor.getLong(
+                        cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                    )
+                    ContentUris.withAppendedId(collection, id).also {
+                        Log.d(TAG, "   ▶ findMediaUri: 찾은 Uri=$it")
+                    }
+                } else {
+                    Log.w(TAG, "   ▶ findMediaUri: 해당 이름의 파일 없음")
+                    null
+                }
+            }
+    }
+
+
+    /** 섹션 헤더 + 비디오 뷰타입 2종 처리 어댑터 */
+    private class SectionedAdapter(
+        private val items: List<ListItem>,
+        private val onItemClick: (ListItem.Video) -> Unit,
+        private val onLockedClick: (ListItem.Video) -> Unit
+    ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+
+        companion object {
+            const val TYPE_HEADER      = 0
+            const val TYPE_VIDEO       = 1
+            const val TYPE_PLACEHOLDER = 2
+        }
+
+        override fun getItemViewType(position: Int) = when (items[position]) {
+            is ListItem.Header      -> TYPE_HEADER
+            is ListItem.Video       -> TYPE_VIDEO
+            is ListItem.Placeholder -> TYPE_PLACEHOLDER
+        }
+
+        private inner class HeaderVH(val binding: ItemDateHeaderBinding)
+            : RecyclerView.ViewHolder(binding.root)
+
+        inner class VideoVH(private val binding: GalleryItemBinding)
+            : RecyclerView.ViewHolder(binding.root) {
+
+            fun bind(v: ListItem.Video) {
+                Glide.with(binding.root).load(v.uri).centerCrop().into(binding.thumbnailImageView)
+
+                val m = TimeUnit.MILLISECONDS.toMinutes(v.durationMs)
+                val s = TimeUnit.MILLISECONDS.toSeconds(v.durationMs) % 60
+                binding.tvPlayDuration.text = String.format("%02d:%02d", m, s)
+
+                // ★ 2개 이상 cropped면 배지 보여주기 (cropped 칸만)
+                binding.badgeMulti.visibility =
+                    if (v.type == "cropped" && v.croppedCount > 1) View.VISIBLE else View.GONE
+
+                if (v.locked) {
+                    binding.dimOverlay.visibility = View.VISIBLE
+                    binding.lockOverlayImageView.visibility = View.VISIBLE
+                    binding.root.setOnClickListener { onLockedClick(v) }
+                } else {
+                    binding.dimOverlay.visibility = View.GONE
+                    binding.lockOverlayImageView.visibility = View.GONE
+                    binding.root.setOnClickListener { onItemClick(v) }
+                }
+            }
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
+            when (viewType) {
+                TYPE_HEADER -> {
+                    val b = ItemDateHeaderBinding.inflate(
+                        LayoutInflater.from(parent.context), parent, false
+                    )
+                    HeaderVH(b)
+                }
+                TYPE_VIDEO -> {
+                    val b = GalleryItemBinding.inflate(
+                        LayoutInflater.from(parent.context), parent, false
+                    )
+                    VideoVH(b)
+                }
+                TYPE_PLACEHOLDER -> {
+                    val marginPx = (4 * parent.context.resources.displayMetrics.density).toInt()
+                    // 1) MarginLayoutParams 생성
+                    val lp = RecyclerView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        setMargins(marginPx, marginPx, marginPx, marginPx)
+                    }
+
+                    // 2) FrameLayout 컨테이너 생성 및 margin 적용
+                    val container = FrameLayout(parent.context).apply {
+                        layoutParams = lp
+                        setBackgroundColor(Color.WHITE)
+                        // 원하는 높이가 있다면 아래처럼 지정 가능 (예: thumbnail 높이에 맞추려면 0dp + aspect ratio 처리 필요)
+                        minimumHeight = (parent.context.resources.displayMetrics.density * 100).toInt()
+                    }
+
+                    // 3) 중앙에 회색 쓰레기통 아이콘 추가
+                    val iconSize = (24 * parent.context.resources.displayMetrics.density).toInt()
+                    val icon = AppCompatImageView(parent.context).apply {
+                        setImageResource(R.drawable.ic_folder_off)
+                        imageTintList = ColorStateList.valueOf(Color.GRAY)
+                        layoutParams = FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER)
+                    }
+                    container.addView(icon)
+
+                    object : RecyclerView.ViewHolder(container) {}
+                }
+                else -> throw IllegalArgumentException("Unknown viewType $viewType")
+            }
+
+        override fun getItemCount() = items.size
+
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+            when (val it = items[position]) {
+                is ListItem.Header -> (holder as HeaderVH).binding.headerText.text = it.label
+                is ListItem.Video  -> (holder as VideoVH).bind(it)   // ← uri, locked, durationMs 따로 안 넘김
+                is ListItem.Placeholder -> { /* no-op */ }
+            }
+        }
+    }
+
+    private var progressDialog: AlertDialog? = null
+    private var progressTickerJob: kotlinx.coroutines.Job? = null
+
+    private fun showBlockingProgress(etaSec: Int) {
+        dismissBlockingProgress() // 혹시 남아 있으면 정리
+
+        val v = layoutInflater.inflate(R.layout.dialog_progress_blocking, null)
+        val tvTitle = v.findViewById<TextView>(R.id.tvTitle)
+        val tvSubtitle = v.findViewById<TextView>(R.id.tvSubtitle)
+        val tvNote = v.findViewById<TextView>(R.id.tvNote)
+        val bar = v.findViewById<ProgressBar>(R.id.progressDeterminate)
+        val spin = v.findViewById<ProgressBar>(R.id.progressIndeterminate)
+
+        // 초기 상태: ETA 기반 가변 진행률
+        bar.visibility = View.VISIBLE
+        spin.visibility = View.GONE
+        tvSubtitle.text = "예상 약 ${etaSec}초"
+
+        progressDialog = AlertDialog.Builder(requireContext())
+            .setView(v)
+            .setCancelable(false)
+            .create().apply {
+                window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                // Back 키로도 닫히지 않게
+                setOnKeyListener { _, keyCode, _ ->
+                    keyCode == android.view.KeyEvent.KEYCODE_BACK
+                }
+                show()
+                // 사이즈
+                window?.setLayout(
+                    (300 * resources.displayMetrics.density).toInt(),
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            }
+
+        // 1초마다 진행률 업데이트 (ETA를 넘기면 무한 로딩으로 전환)
+        val start = System.currentTimeMillis()
+        progressTickerJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
+            while (true) {
+                val elapsedSec = ((System.currentTimeMillis() - start) / 1000.0).toInt()
+                if (elapsedSec <= etaSec && etaSec > 0) {
+                    val pct = ((elapsedSec.toDouble() / etaSec) * 100).coerceIn(0.0, 99.0).toInt()
+                    bar.progress = pct
+                    val remain = (etaSec - elapsedSec).coerceAtLeast(0)
+                    tvSubtitle.text = "예상 약 ${remain}초 남음"
+                } else {
+                    // ETA 초과 → 무한 로딩으로
+                    bar.visibility = View.GONE
+                    spin.visibility = View.VISIBLE
+                    tvSubtitle.text = "조금만 더 기다려주세요…"
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    private fun dismissBlockingProgress() {
+        progressTickerJob?.cancel()
+        progressTickerJob = null
+        progressDialog?.dismiss()
+        progressDialog = null
+    }
+
+    // 갤러리 새로고침 (간단 버전)
+    private fun refreshGallery() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val items = loadVideoItems()
+            withContext(Dispatchers.Main) {
+                sectionedItems = items
+                (binding.galleryRecyclerView.adapter as? RecyclerView.Adapter<*>)?.let { ad ->
+                    // 통째로 갈아끼우는게 간단
+                    binding.galleryRecyclerView.adapter = null
+                    binding.galleryRecyclerView.adapter = SectionedAdapter(
+                        items,
+                        onItemClick = { v ->
+                            when (v.type) {
+                                "cropped" -> {
+                                    CroppedPagerDialogFragment
+                                        .newInstance(v.uuid)
+                                        .show(childFragmentManager, "croppedPager")
+                                }
+                                else -> findNavController().navigate(
+                                    GalleryFragmentDirections
+                                        .actionGalleryFragmentToPreviewPlayerFragment(v.uri.toString())
+                                )
+                            }
+                        },
+                        onLockedClick = { v -> showLockedOverlay(v.uri) }
+                    )
+                }
+            }
+        }
+    }
+}

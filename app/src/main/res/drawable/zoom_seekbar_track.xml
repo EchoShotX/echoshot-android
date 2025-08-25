@@ -1,0 +1,33 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 배경 트랙 (비활성 진행도) -->
+    <item android:id="@android:id/background">
+        <shape android:shape="rectangle">
+            <size android:height="2dp" />
+            <solid android:color="#33FFFFFF" />
+            <corners android:radius="1dp" />
+        </shape>
+    </item>
+
+    <!-- 진행 중간 트랙 (secondaryProgress) -->
+    <item android:id="@android:id/secondaryProgress">
+        <clip>
+            <shape android:shape="rectangle">
+                <size android:height="2dp" />
+                <solid android:color="#55FFFFFF" />
+                <corners android:radius="1dp" />
+            </shape>
+        </clip>
+    </item>
+
+    <!-- 진행 트랙 (active progress) -->
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape android:shape="rectangle">
+                <size android:height="2dp" />
+                <solid android:color="#FFFFFFFF" />
+                <corners android:radius="1dp" />
+            </shape>
+        </clip>
+    </item>
+</layer-list>

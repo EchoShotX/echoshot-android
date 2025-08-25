@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp"
+    android:background="@drawable/rounded_bg_dark">
+
+    <!-- 1) 미리보기: 9:16, 위쪽~토글 사이를 채움 -->
+    <ImageView
+        android:id="@+id/preview"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:scaleType="centerCrop"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/toggleCropMode"
+        app:layout_constrainedWidth="true"
+        app:layout_constraintWidth_max="160dp"
+        app:layout_constraintDimensionRatio="H,9:16"/>
+
+    <!-- 2) 모드 버튼 2개 (가로 균등) -->
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/toggleCropMode"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        app:singleSelection="true"
+        app:layout_constraintTop_toBottomOf="@id/preview"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCenterMode"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="인물중심 모드"
+            android:textColor="@android:color/white"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnWideMode"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="와이드 모드"
+            android:textColor="@android:color/white"/>
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+    <Button
+        android:id="@+id/btn_new_from_mp4"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="MP4에서 생성"
+        android:textColor="@android:color/white"
+        android:backgroundTint="#FF03DAC5"
+        app:layout_constraintTop_toBottomOf="@id/btnNew"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+    <!-- 3) 시작 버튼: 토글 아래 풀폭 -->
+    <Button
+        android:id="@+id/btnNew"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="시작"
+        android:textColor="@android:color/white"
+        android:backgroundTint="#FF6200EE"
+        app:layout_constraintTop_toBottomOf="@id/toggleCropMode"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- 4) MP4에서 새로 만들기 버튼: 시작 버튼 아래 풀폭 -->
+
+</androidx.constraintlayout.widget.ConstraintLayout>

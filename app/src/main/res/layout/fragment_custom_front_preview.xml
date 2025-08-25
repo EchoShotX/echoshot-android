@@ -1,0 +1,122 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- 상단 바 -->
+    <LinearLayout
+        android:id="@+id/top_bar"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"
+        android:background="#000000"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
+
+        <ImageView
+            android:id="@+id/icon_fullratio"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/fullratio"
+            android:contentDescription="Fullratio" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <ImageView
+            android:id="@+id/icon_nozoom"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/nozoom"
+            android:contentDescription="Nozoom_Mode" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <ImageView
+            android:id="@+id/icon_zoom"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/zoom"
+            android:contentDescription="Zoom_Mode" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <ImageView
+            android:id="@+id/icon_setting"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/setting"
+            app:tint="@android:color/white"
+            android:contentDescription="Setting" />
+    </LinearLayout>
+
+    <!-- 카메라 프리뷰 -->
+    <com.example.android.camera.utils.AutoFitSurfaceView
+        android:id="@+id/view_finder"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="50dp" />
+
+    <!-- 하단 버튼 그룹 -->
+    <LinearLayout
+        android:id="@+id/bottom_button_group"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="24dp"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <ImageButton
+            android:id="@+id/gallery_button"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="32dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="centerCrop"
+            android:clickable="true"
+            android:focusable="true" />
+
+        <ImageButton
+            android:id="@+id/capture_button"
+            android:layout_width="96dp"
+            android:layout_height="96dp"
+            android:scaleType="fitCenter"
+            android:background="@drawable/ic_shutter"
+            app:tint="@android:color/holo_red_dark"
+            android:contentDescription="@string/capture" />
+
+        <ImageButton
+            android:id="@+id/switch_camera_button"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="32dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:padding="4dp"
+            android:src="@drawable/ic_camera_switch"
+            app:tint="@android:color/white"
+            android:clickable="true"
+            android:focusable="true" />
+    </LinearLayout>
+
+    <!-- 촬영 타이머 -->
+    <Chronometer
+        android:id="@+id/capture_timer"
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:layout_gravity="bottom|right"
+        android:textColor="@android:color/holo_red_light"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
+
+</FrameLayout>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 외부 저장소의 앱 전용 디렉토리 허용 -->
+    <external-files-path
+        name="camera_videos"
+        path="Camera2App/" />
+</paths>
