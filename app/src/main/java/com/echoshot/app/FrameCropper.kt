@@ -145,6 +145,9 @@ class FrameCropper(
 
     private fun Double.isBad() = this.isNaN() || this.isInfinite()
 
+    // 파일 상단 지역변수
+    var lastWrittenPtsUs: Long = Long.MIN_VALUE
+
     private fun make9x16KeepHeight(
         x1: Double, y1: Double, x2: Double, y2: Double,
         screenW: Int
@@ -313,7 +316,7 @@ class FrameCropper(
 
                 val sw = frames[start + k].screenW
                 val sh = frames[start + k].screenH
-                val r = make9x16KeepHeight(x1, y1, x2, y2, sh)
+                val r = make9x16KeepHeight(x1, y1, x2, y2, sw)
                 frames[start + k] = FrameData(r[0], r[1], r[2], r[3], sw, sh)
             }
             i = end
@@ -378,6 +381,7 @@ class FrameCropper(
                 EGL14.EGL_GREEN_SIZE, 8,
                 EGL14.EGL_BLUE_SIZE, 8,
                 EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
+                0x3142, 1,
                 EGL14.EGL_NONE
             ), 0, cfg, 0, 1, IntArray(1), 0
         )
@@ -411,6 +415,10 @@ class FrameCropper(
         var renderIdx = 0       // 렌더(디코더 출력) 기준 프레임 인덱스
         var encodedIdx = 0      // 인코더가 실제 낸 프레임(CodecConfig 제외) 카운트
         var sawEOS = false
+
+        var lastPtsUs = -1L
+        var maxPresentedPtsUs = -1L
+        var padStartPtsUs = Long.MAX_VALUE
 
         val st = FloatArray(16)
         val crop = FloatArray(16)
@@ -446,126 +454,279 @@ class FrameCropper(
 
                 val outIndex = decoder.dequeueOutputBuffer(decInfo, 10_000)
                 if (outIndex >= 0) {
-                    decoder.releaseOutputBuffer(outIndex, true)
+                    val isEosOutput = (decInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                    val doRender = !isEosOutput
 
-                    surfaceTexture.updateTexImage()
-                    surfaceTexture.getTransformMatrix(st)
+                    decoder.releaseOutputBuffer(outIndex, doRender)
 
-                    val data = paddedFrames.getOrNull(renderIdx) ?: paddedFrames.last()
+                    if (doRender) {
+                        surfaceTexture.updateTexImage()
+                        surfaceTexture.getTransformMatrix(st)
 
-                    // 프레임별 스케일 (screen → decoder input)
-                    val scaleX = inW.toFloat() / data.screenW
-                    val scaleY = inH.toFloat() / data.screenH
+                        val data = paddedFrames.getOrNull(renderIdx) ?: paddedFrames.last()
 
-                    // 스크린 → 픽셀(float)
-                    val px1f = (data.x1 * scaleX).toFloat()
-                    val py1f = (data.y1 * scaleY).toFloat()
-                    val px2f = (data.x2 * scaleX).toFloat()
-                    val py2f = (data.y2 * scaleY).toFloat()
+                        // 프레임별 스케일 (screen → decoder input)
+                        val scaleX = inW.toFloat() / data.screenW
+                        val scaleY = inH.toFloat() / data.screenH
 
-                    // 짝수 정렬 및 9:16 미세 보정
-                    var x1 = floor(px1f).toInt();
-                    var y1 = floor(py1f).toInt()
-                    var x2 = ceil(px2f).toInt();
-                    var y2 = ceil(py2f).toInt()
+                        // 스크린 → 픽셀(float)
+                        val px1f = (data.x1 * scaleX).toFloat()
+                        val py1f = (data.y1 * scaleY).toFloat()
+                        val px2f = (data.x2 * scaleX).toFloat()
+                        val py2f = (data.y2 * scaleY).toFloat()
 
-                    x1 = (x1.coerceIn(0, inW - 2)) and -2
-                    y1 = (y1.coerceIn(0, inH - 2)) and -2
-                    x2 = ((x2.coerceIn(x1 + 2, inW)) + 1) and -2
-                    y2 = ((y2.coerceIn(y1 + 2, inH)) + 1) and -2
+                        // 짝수 정렬 및 9:16 미세 보정
+                        var x1 = floor(px1f).toInt();
+                        var y1 = floor(py1f).toInt()
+                        var x2 = ceil(px2f).toInt();
+                        var y2 = ceil(py2f).toInt()
 
-                    val cropW = (x2 - x1).coerceAtLeast(2)
-                    val cropH = (y2 - y1).coerceAtLeast(2)
-                    if (kotlin.math.abs(cropW / cropH.toFloat() - 9f / 16f) > 1e-3f) {
-                        val adjustedW = (cropH * 9f / 16f).roundToInt() / 2 * 2
-                        val cx = (x1 + x2) / 2
-                        x1 = cx - adjustedW / 2
-                        x2 = cx + adjustedW / 2
-                    }
+                        x1 = (x1.coerceIn(0, inW - 2)) and -2
+                        y1 = (y1.coerceIn(0, inH - 2)) and -2
+                        x2 = ((x2.coerceIn(x1 + 2, inW)) + 1) and -2
+                        y2 = ((y2.coerceIn(y1 + 2, inH)) + 1) and -2
 
-                    // 픽셀 → 정규화
-                    val u0 = (x1 / inW.toFloat()).coerceIn(0f, 1f)
-                    val v0 = (y1 / inH.toFloat()).coerceIn(0f, 1f)
-                    val u1 = (x2 / inW.toFloat()).coerceIn(0f, 1f)
-                    val v1 = (y2 / inH.toFloat()).coerceIn(0f, 1f)
-
-                    // 최종 텍스처 행렬 = CROP × ST
-                    Matrix.setIdentityM(crop, 0)
-                    Matrix.translateM(crop, 0, u0, v0, 0f)
-                    Matrix.scaleM(crop, 0, (u1 - u0), (v1 - v0), 1f)
-                    Matrix.multiplyMM(finalM, 0, crop, 0, st, 0)
-
-                    // 타임스탬프 & 렌더
-                    EGLExt.eglPresentationTimeANDROID(
-                        eglDisplay,
-                        eglSurface,
-                        decInfo.presentationTimeUs * 1000L
-                    )
-                    GLES20.glViewport(0, 0, inW, inH)
-                    renderer.drawFrame(textureId, finalM)
-                    EGL14.eglSwapBuffers(eglDisplay, eglSurface)
-
-                    // 디버그 기록 (렌더 기준)
-                    if (debugWriter != null) {
-                        val usedScreenX1 = x1 / scaleX
-                        val usedScreenY1 = y1 / scaleY
-                        val usedScreenX2 = x2 / scaleX
-                        val usedScreenY2 = y2 / scaleY
-                        val obj = JSONObject().apply {
-                            put("frame", renderIdx)
-                            put("pts_us", decInfo.presentationTimeUs)
-                            put("in_w", inW); put("in_h", inH)
-                            put("screen_w", data.screenW); put("screen_h", data.screenH)
-                            put(
-                                "requested_box_screen_xyxy", JSONArray(
-                                    doubleArrayOf(
-                                        data.x1, data.y1, data.x2, data.y2
-                                    )
-                                )
-                            )
-                            put(
-                                "requested_box_px_float", JSONArray(
-                                    floatArrayOf(
-                                        px1f, py1f, px2f, py2f
-                                    )
-                                )
-                            )
-                            put("applied_box_px_int", JSONArray(intArrayOf(x1, y1, x2, y2)))
-                            put(
-                                "applied_box_screen_xyxy", JSONArray(
-                                    doubleArrayOf(
-                                        usedScreenX1.toDouble(), usedScreenY1.toDouble(),
-                                        usedScreenX2.toDouble(), usedScreenY2.toDouble()
-                                    )
-                                )
-                            )
-                            put("applied_box_norm_uv", JSONArray(floatArrayOf(u0, v0, u1, v1)))
-                            put("enc_idx_so_far", encodedIdx)
+                        val cropW = (x2 - x1).coerceAtLeast(2)
+                        val cropH = (y2 - y1).coerceAtLeast(2)
+                        if (kotlin.math.abs(cropW / cropH.toFloat() - 9f / 16f) > 1e-3f) {
+                            val adjustedW = (cropH * 9f / 16f).roundToInt() / 2 * 2
+                            val cx = (x1 + x2) / 2
+                            x1 = cx - adjustedW / 2
+                            x2 = cx + adjustedW / 2
                         }
-                        debugWriter.write(obj.toString()); debugWriter.write("\n")
-                        if (renderIdx % 60 == 0) debugWriter.flush()
+
+                        // 픽셀 → 정규화
+                        val u0 = (x1 / inW.toFloat()).coerceIn(0f, 1f)
+                        val v0 = (y1 / inH.toFloat()).coerceIn(0f, 1f)
+                        val u1 = (x2 / inW.toFloat()).coerceIn(0f, 1f)
+                        val v1 = (y2 / inH.toFloat()).coerceIn(0f, 1f)
+
+                        // 최종 텍스처 행렬 = CROP × ST
+                        Matrix.setIdentityM(crop, 0)
+                        Matrix.translateM(crop, 0, u0, v0, 0f)
+                        Matrix.scaleM(crop, 0, (u1 - u0), (v1 - v0), 1f)
+                        Matrix.multiplyMM(finalM, 0, crop, 0, st, 0)
+
+                        // PTS 단조 보정
+                        var ptsUs = decInfo.presentationTimeUs
+                        if (ptsUs <= lastPtsUs) ptsUs = lastPtsUs + 1
+                        lastPtsUs = ptsUs
+                        maxPresentedPtsUs = maxOf(maxPresentedPtsUs, ptsUs)
+
+                        GLES20.glViewport(0, 0, inW, inH)
+                        renderer.drawFrame(textureId, finalM)
+                        EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, ptsUs * 1000L)
+                        EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+
+
+                        // 디버그 기록 (렌더 기준)
+                        if (debugWriter != null) {
+                            val usedScreenX1 = x1 / scaleX
+                            val usedScreenY1 = y1 / scaleY
+                            val usedScreenX2 = x2 / scaleX
+                            val usedScreenY2 = y2 / scaleY
+                            val obj = JSONObject().apply {
+                                put("frame", renderIdx)
+                                put("pts_us", ptsUs)
+                                put("in_w", inW); put("in_h", inH)
+                                put("screen_w", data.screenW); put("screen_h", data.screenH)
+                                put(
+                                    "requested_box_screen_xyxy", JSONArray(
+                                        doubleArrayOf(
+                                            data.x1, data.y1, data.x2, data.y2
+                                        )
+                                    )
+                                )
+                                put(
+                                    "requested_box_px_float", JSONArray(
+                                        floatArrayOf(
+                                            px1f, py1f, px2f, py2f
+                                        )
+                                    )
+                                )
+                                put("applied_box_px_int", JSONArray(intArrayOf(x1, y1, x2, y2)))
+                                put(
+                                    "applied_box_screen_xyxy", JSONArray(
+                                        doubleArrayOf(
+                                            usedScreenX1.toDouble(), usedScreenY1.toDouble(),
+                                            usedScreenX2.toDouble(), usedScreenY2.toDouble()
+                                        )
+                                    )
+                                )
+                                put("applied_box_norm_uv", JSONArray(floatArrayOf(u0, v0, u1, v1)))
+                                put("enc_idx_so_far", encodedIdx)
+                            }
+                            debugWriter.write(obj.toString()); debugWriter.write("\n")
+                            if (renderIdx % 60 == 0) debugWriter.flush()
+                        }
+
+                        // 렌더 프레임 인덱스 증가
+                        renderIdx++
                     }
-
-                    // 렌더 프레임 인덱스 증가
-                    renderIdx++
-
                     // 인코더 drain (별도 encInfo 사용)
                     while (true) {
                         val encIndex = encoder.dequeueOutputBuffer(encInfo, 0)
-                        if (encIndex >= 0) {
-                            if (!muxerStarted) {
-                                outTrackIdx = muxer.addTrack(encoder.outputFormat)
-                                muxer.start(); muxerStarted = true
+                        when (encIndex) {
+                            MediaCodec.INFO_TRY_AGAIN_LATER -> break
+                            MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                                if (!muxerStarted) {
+                                    outTrackIdx = muxer.addTrack(encoder.outputFormat)
+                                    muxer.start()
+                                    muxerStarted = true
+                                }
                             }
-                            val encoded = encoder.getOutputBuffer(encIndex)!!
-                            muxer.writeSampleData(outTrackIdx, encoded, encInfo)
-                            encoder.releaseOutputBuffer(encIndex, false)
+                            else -> if (encIndex >= 0) {
+                                if (encInfo.size > 0 && muxerStarted) {
+                                    val samplePts = encInfo.presentationTimeUs
 
-                            if ((encInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                                    // padStartPtsUs 미만 = 실제 프레임 → 기록
+                                    if (samplePts < padStartPtsUs) {
+                                        val buf = encoder.getOutputBuffer(encIndex)!!
+                                        muxer.writeSampleData(outTrackIdx, buf, encInfo)
+                                        if ((encInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                                            encodedIdx++
+                                        }
+                                    } else {
+                                        // 패드 프레임 → 기록하지 않음 (드롭)
+                                        // 필요하면 Log로 떨어진 패드 개수 추적 가능
+                                        // Log.d(TAG, "drop pad frame ptsUs=$samplePts")
+                                    }
+                                }
+                                encoder.releaseOutputBuffer(encIndex, false)
+                                if ((encInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
+                            }
+                        }
+                    }
+                }
+            }
+            // 1) 디코더 잔여 출력 끝까지 뽑아내며 렌더
+            var decoderEosSeen = false
+            while (!decoderEosSeen) {
+                val outIndex = decoder.dequeueOutputBuffer(decInfo, 10_000)
+                when {
+                    outIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                        // 잠시 대기 후 계속 시도 (무한루프 방지하려면 카운터 넣어도 됨)
+                        continue
+                    }
+                    outIndex >= 0 -> {
+                        val isEosOutput = (decInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                        val doRender = !isEosOutput
+
+                        decoder.releaseOutputBuffer(outIndex, doRender)
+
+                        if (doRender) {
+                            surfaceTexture.updateTexImage()
+                            surfaceTexture.getTransformMatrix(st)
+
+                            val data = paddedFrames.getOrNull(renderIdx) ?: paddedFrames.last()
+
+                            // --- 메인 루프와 동일한 크롭 산식 ---
+                            val scaleX = inW.toFloat() / data.screenW
+                            val scaleY = inH.toFloat() / data.screenH
+
+                            val px1f = (data.x1 * scaleX).toFloat()
+                            val py1f = (data.y1 * scaleY).toFloat()
+                            val px2f = (data.x2 * scaleX).toFloat()
+                            val py2f = (data.y2 * scaleY).toFloat()
+
+                            var x1 = floor(px1f).toInt()
+                            var y1 = floor(py1f).toInt()
+                            var x2 = ceil(px2f).toInt()
+                            var y2 = ceil(py2f).toInt()
+
+                            x1 = (x1.coerceIn(0, inW - 2)) and -2
+                            y1 = (y1.coerceIn(0, inH - 2)) and -2
+                            x2 = ((x2.coerceIn(x1 + 2, inW)) + 1) and -2
+                            y2 = ((y2.coerceIn(y1 + 2, inH)) + 1) and -2
+
+                            val cropW = (x2 - x1).coerceAtLeast(2)
+                            val cropH = (y2 - y1).coerceAtLeast(2)
+                            if (kotlin.math.abs(cropW / cropH.toFloat() - 9f / 16f) > 1e-3f) {
+                                val adjustedW = (cropH * 9f / 16f).roundToInt() / 2 * 2
+                                val cx = (x1 + x2) / 2
+                                x1 = cx - adjustedW / 2
+                                x2 = cx + adjustedW / 2
+                            }
+
+                            val u0 = (x1 / inW.toFloat()).coerceIn(0f, 1f)
+                            val v0 = (y1 / inH.toFloat()).coerceIn(0f, 1f)
+                            val u1 = (x2 / inW.toFloat()).coerceIn(0f, 1f)
+                            val v1 = (y2 / inH.toFloat()).coerceIn(0f, 1f)
+
+                            Matrix.setIdentityM(crop, 0)
+                            Matrix.translateM(crop, 0, u0, v0, 0f)
+                            Matrix.scaleM(crop, 0, (u1 - u0), (v1 - v0), 1f)
+                            Matrix.multiplyMM(finalM, 0, crop, 0, st, 0)
+                            // --- 메인 루프와 동일한 크롭 산식 ---
+
+                            // 🔒 PTS 단조 보정
+                            var ptsUs = decInfo.presentationTimeUs
+                            if (ptsUs <= lastPtsUs) ptsUs = lastPtsUs + 1
+                            lastPtsUs = ptsUs
+                            maxPresentedPtsUs = maxOf(maxPresentedPtsUs, ptsUs)
+
+                            GLES20.glViewport(0, 0, inW, inH)
+                            renderer.drawFrame(textureId, finalM)
+                            EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, ptsUs * 1000L)
+                            EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+
+                            renderIdx++
+                        }
+                        if ((decInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                            decoderEosSeen = true
+                        }
+                    }
+                    else -> { /* INFO_OUTPUT_FORMAT_CHANGED 등 무시 */ }
+                }
+            }
+
+            // 2) 인코더에 EOS 신호 (Surface 입력)
+            if (Build.VERSION.SDK_INT >= 18) {
+                // 마지막 "실제" 프레임 다음 PTS를 패드 시작점으로 기록
+                padStartPtsUs = lastPtsUs + 1
+
+                GLES20.glFinish()
+                encoder.signalEndOfInputStream()
+            }
+
+            // 3) 인코더를 EOS까지 드레인 (muxer start는 INFO_OUTPUT_FORMAT_CHANGED에서)
+            while (true) {
+                val encIndex = encoder.dequeueOutputBuffer(encInfo, 10_000)
+                when {
+                    encIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> continue
+                    encIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        if (!muxerStarted) {
+                            outTrackIdx = muxer.addTrack(encoder.outputFormat)
+                            muxer.start()
+                            muxerStarted = true
+                        }
+                    }
+                    encIndex >= 0 -> {
+                        val isConfig = (encInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+                        val isEos    = (encInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                        val samplePts = encInfo.presentationTimeUs
+
+                        // padStartPtsUs 이전의 "실제" 프레임만 기록
+                        // 변경:
+                        if (
+                            encInfo.size > 0 &&
+                            muxerStarted &&
+                            !isConfig &&
+                            samplePts < padStartPtsUs &&           // 패드 프레임 드롭
+                            samplePts > lastWrittenPtsUs           // ⬅️ 중복/역행 PTS 드롭
+                        ) {
+                            encoder.getOutputBuffer(encIndex)?.let { buf ->
+                                muxer.writeSampleData(outTrackIdx, buf, encInfo)
+                                lastWrittenPtsUs = samplePts        // ⬅️ 갱신
                                 encodedIdx++
                             }
-                            if ((encInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
-                        } else break
+                        } else {
+                            // 패드 프레임 또는 CONFIG → 기록/집계 안함
+                            // Log.d(TAG, "drop: pts=$samplePts flags=${encInfo.flags}")
+                        }
+
+                        encoder.releaseOutputBuffer(encIndex, false)
+                        if (isEos) break
                     }
                 }
             }

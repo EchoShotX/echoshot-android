@@ -206,7 +206,7 @@ object LogOrchestrator {
     }
 
     /** Downloads/EchoShotLogs 아래에 JSON 파일 생성(SAF) */
-    private fun createOutputJsonInDownloads(ctx: Context, displayName: String): Uri? {
+    fun createOutputJsonInDownloads(ctx: Context, displayName: String): Uri? {
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         } else {

@@ -407,27 +407,6 @@ class CustomHardwarePipeline (width: Int, height: Int, fps: Int, filterOn: Boole
         renderHandler.setZoomLevel(zoom)
     }
 
-    override fun getCurrentCropRegion(): Rect {
-        val sensorRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
-            ?: return Rect()
-
-        val centerX = sensorRect.centerX()
-        val centerY = sensorRect.centerY()
-        val deltaX = (sensorRect.width() / (2 * zoomLevel)).toInt()
-        val deltaY = (sensorRect.height() / (2 * zoomLevel)).toInt()
-
-        return Rect(
-            centerX - deltaX,
-            centerX + deltaX,
-            centerY - deltaY,
-            centerY + deltaY
-        )
-    }
-
-    fun getZoomLevel(): Float {
-        return zoomLevel
-    }
-
     private class ShaderProgram(id: Int,
                                 vPositionLoc: Int,
                                 texMatrixLoc: Int) {
@@ -555,6 +534,16 @@ class CustomHardwarePipeline (width: Int, height: Int, fps: Int, filterOn: Boole
         val metrics = viewFinder.context.resources.displayMetrics
         val baseScreenWidth = metrics.widthPixels
         val baseScreenHeight = metrics.heightPixels
+
+        private var ptsBaseNs = -1L
+        private var frameIndex = 0L
+        private val frameDurNs = (1_000_000_000.0 / fps).toLong()
+
+        private fun nextPtsNs(nowNs: Long = cameraTexture.timestamp): Long {
+            if (ptsBaseNs < 0) { ptsBaseNs = nowNs; frameIndex = 0 }
+            else frameIndex++
+            return ptsBaseNs + frameIndex * frameDurNs
+        }
 
         public fun startRecording() {
             currentlyRecording = true
@@ -1300,7 +1289,7 @@ class CustomHardwarePipeline (width: Int, height: Int, fps: Int, filterOn: Boole
 
         }
 
-        private fun copyRenderToEncode() {
+        private fun copyRenderToEncode(ptsNs: Long) {
             EGL14.eglMakeCurrent(eglDisplay, eglEncoderSurface, eglRenderSurface, eglContext)
 
             var viewportWidth = width
@@ -1315,14 +1304,14 @@ class CustomHardwarePipeline (width: Int, height: Int, fps: Int, filterOn: Boole
 
             copyTexture(renderTexId, renderTexture, Rect(0, 0, viewportWidth, viewportHeight),
                 renderToEncodeShaderProgram!!, false)
-
+            EGLExt.eglPresentationTimeANDROID(eglDisplay, eglEncoderSurface, ptsNs)
             encoder.frameAvailable()
 
             EGL14.eglSwapBuffers(eglDisplay, eglEncoderSurface)
             Log.d("RenderHandler", "🎥 copyRenderToEncode called")
         }
 
-        private fun copyRenderToEncodeOriginal() {
+        private fun copyRenderToEncodeOriginal(ptsNs: Long) {
             EGL14.eglMakeCurrent(eglDisplay, eglEncoderSurfaceZoomed, eglEncoderSurfaceZoomed, eglContext) // 여기 수정 필요
 
             var viewportWidth = width
@@ -1337,6 +1326,7 @@ class CustomHardwarePipeline (width: Int, height: Int, fps: Int, filterOn: Boole
             copyTextureOriginal(renderTexId, renderTexture, Rect(0, 0, viewportWidth, viewportHeight),
                 renderToEncodeShaderProgram!!, false)
 
+            EGLExt.eglPresentationTimeANDROID(eglDisplay, eglEncoderSurface, ptsNs)
             originalEncoder.frameAvailable() //여기 수정해야됨
             EGL14.eglSwapBuffers(eglDisplay, eglEncoderSurfaceZoomed)
             Log.d("RenderHandler", "🎥 copyRenderToEncodeOriginal called")
@@ -1454,28 +1444,31 @@ class CustomHardwarePipeline (width: Int, height: Int, fps: Int, filterOn: Boole
         private fun onFrameAvailableImpl(surfaceTexture: SurfaceTexture) {
             if (eglContext == EGL14.EGL_NO_CONTEXT) return
 
-            // 1. 카메라 텍스처 최신화
+            // 1) 카메라 텍스처 갱신
             cameraTexture.updateTexImage()
 
-            // 2. 카메라 → 렌더 텍스처 복사
+            // 2) 공통 PTS 한 번 생성 (두 트랙 모두에 동일하게 사용)
+            val ptsNs = nextPtsNs(cameraTexture.timestamp)
+
+            // 3) 카메라 -> 렌더 (여기서 zoom 변환이 적용됨)
             if (eglRenderSurface != EGL14.EGL_NO_SURFACE) {
                 copyCameraToRender()
-
             }
 
-            // 3. 줌 적용 없이 원본 저장 (⚠️ 여기에선 zoomLevel 적용하지 않도록 분리된 함수 내에서 명확히 처리 필요)
-            if (currentlyRecording && eglEncoderSurface != EGL14.EGL_NO_SURFACE) {
-                copyRenderToEncodeOriginal()  // 이 함수 내부에서 zoomLevel 강제 1.0 또는 미적용해야 함
-            }
-
-            // 4. 줌 적용 후: preview + 줌 인코딩
-            if (eglRenderSurface != EGL14.EGL_NO_SURFACE) {
-                // 줌 적용된 뷰포트 기반 렌더 → 인코딩
-                if (currentlyRecording && eglEncoderSurfaceZoomed != EGL14.EGL_NO_SURFACE) {
-                    copyRenderToEncode()
+            // 4) 인코딩 (같은 ptsNs로 원본/줌 둘 다 찍기)
+            if (currentlyRecording) {
+                // 원본 트랙(줌 미적용)
+                if (eglEncoderSurface != EGL14.EGL_NO_SURFACE) {
+                    copyRenderToEncodeOriginal(ptsNs)
                 }
+                // 줌 트랙(렌더텍스처, 줌 적용 상태)
+                if (eglEncoderSurfaceZoomed != EGL14.EGL_NO_SURFACE) {
+                    copyRenderToEncode(ptsNs)
+                }
+            }
 
-                // 줌 적용된 렌더 → TextureView 표시용
+            // 5) 프리뷰 업데이트
+            if (eglRenderSurface != EGL14.EGL_NO_SURFACE) {
                 copyRenderToPreview()
             }
         }

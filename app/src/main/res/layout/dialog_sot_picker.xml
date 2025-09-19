@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="16dp">
+
+    <!-- 캔버스: 첫 프레임 + 드래그 박스 오버레이 -->
+    <FrameLayout
+        android:id="@+id/sotCanvas"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#111"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintDimensionRatio="1:1">
+
+        <ImageView
+            android:id="@+id/ivFrame"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:adjustViewBounds="true"
+            android:scaleType="fitCenter"
+            android:contentDescription="@string/app_name"/>
+
+        <!-- 빨간 박스 오버레이 (정사각 고정) -->
+        <com.echoshot.app.mp4detact.RectOverlayView
+            android:id="@+id/overlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"/>
+    </FrameLayout>
+
+    <!-- 모드 -->
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/toggleCropMode"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        app:singleSelection="true"
+        app:layout_constraintTop_toBottomOf="@id/sotCanvas"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCenterMode"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="인물중심"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnWideMode"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="와이드"/>
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+    <!-- 크기 조절 -->
+    <LinearLayout
+        android:id="@+id/sizeControls"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="end"
+        app:layout_constraintTop_toBottomOf="@id/toggleCropMode"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <Button
+            android:id="@+id/btnSmaller"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="작게"/>
+
+        <Space
+            android:layout_width="12dp"
+            android:layout_height="0dp"/>
+
+        <Button
+            android:id="@+id/btnBigger"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="크게"/>
+    </LinearLayout>
+
+    <!-- 하단 버튼 -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="end"
+        android:layout_marginTop="12dp"
+        app:layout_constraintTop_toBottomOf="@id/sizeControls"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <Button
+            android:id="@+id/btnCancel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="취소"/>
+
+        <Space
+            android:layout_width="12dp"
+            android:layout_height="0dp"/>
+
+        <Button
+            android:id="@+id/btnRun"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SOT 실행"/>
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

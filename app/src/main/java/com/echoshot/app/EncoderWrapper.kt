@@ -347,6 +347,16 @@ class EncoderWrapper(private val name: String,
         }
     }
 
+    fun signalEndOfInput() {
+        if (mUseMediaRecorder) return
+        mEncoder?.signalEndOfInputStream()
+        // 출력 큐 비우도록 한 번 더 깨우기
+        mEncoderThread?.getHandler()?.sendMessage(
+            mEncoderThread!!.getHandler()
+                .obtainMessage(EncoderThread.EncoderHandler.MSG_FRAME_AVAILABLE)
+        )
+    }
+
     /**
      * Object that encapsulates the encoder thread.
      * <p>

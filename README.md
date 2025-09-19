@@ -1,31 +1,35 @@
 
-Android Camera2Video Sample
-===========================
+EchoShot - AI-Powered Video Analysis App
+========================================
 
-This sample captures video record via the Camera2 API including displaying
-a camera preview and capturing a high-speed (slow motion) video using
-repeating capture requests.
+EchoShot is an Android application that combines video recording with advanced AI-powered analysis capabilities including object detection, pose estimation, and single object tracking (SOT) using SiamRPN++ Mobile model.
 
-Introduction
-------------
+Features
+--------
 
-The [Camera2 API][1] allows users to capture video from the camera by
-sending repeating capture requests from the camera framework to a
-[media recorder][2].
+### Video Recording
+- High-quality video recording using Camera2 API
+- Configurable resolution, frame rate, and camera selection
+- HDR and SDR format support
+- Preview stabilization
 
-This sample displays a live camera preview, allows the user to
-press and hold the screen to record a video, and also encodes the recording
-in an MP4 video file. The user has the following choices:
+### AI-Powered Analysis
+- **Object Detection**: YOLOv8-based real-time object detection
+- **Pose Estimation**: MoveNet-based human pose estimation
+- **Single Object Tracking (SOT)**: SiamRPN++ Mobile-based tracking
+  - MobileNetV2 backbone with width_mult: 1.4
+  - Used layers: [3, 5, 7]
+  - Exemplar size: 127x127, Instance size: 255x255
+  - Anchor configuration: 5 anchors with ratios [0.33, 0.5, 1, 2, 3] and scales [8]
 
-1) The dimensions and frame rate of the video
-2) Which camera to use
-3) Whether to capture in HDR format or SDR format
-4) Whether to capture using two streams directly to a SurfaceView, or one stream to an EGL pipeline
-5) Whether to apply a portrait filter in TextureView mode
-6) Whether to apply preview stabilization
-7) In single-stream mode with HDR, whether to use linear or PQ preview
-
-The choice to use HDR will be presented if the capability is detected on the host device.
+### SOT Configuration
+The SiamRPN++ Mobile model is configured with the following parameters:
+- **META_ARC**: "siamrpn_mobilev2_l234_dwxcorr"
+- **BACKBONE**: MobileNetV2 (width_mult: 1.4, used_layers: [3, 5, 7])
+- **ADJUST**: AdjustAllLayer (in_channels: [44, 134, 448], out_channels: [256, 256, 256])
+- **RPN**: MultiRPN (anchor_num: 5, in_channels: [256, 256, 256])
+- **ANCHOR**: stride=8, ratios=[0.33, 0.5, 1, 2, 3], scales=[8]
+- **TRACK**: penalty_k=0.04, window_influence=0.4, lr=0.5, context_amount=0.5
 
 [1]: https://developer.android.com/reference/android/hardware/camera2/package-summary.html
 [2]: https://developer.android.com/reference/android/media/MediaRecorder
@@ -36,6 +40,8 @@ Pre-requisites
 - Android SDK 33+
 - Android Studio 3.6+
 - Device with video capture capability (or emulator)
+- ONNX Runtime Mobile for SiamRPN++ model inference
+- OpenCV for Android for image processing
 
 Screenshots
 -------------
@@ -45,8 +51,14 @@ Screenshots
 Getting Started
 ---------------
 
-This sample uses the Gradle build system. To build this project, use the
+This project uses the Gradle build system. To build this project, use the
 "gradlew build" command or use "Import Project" in Android Studio.
+
+### SOT Usage
+1. Record or select a video file
+2. Use the SOT picker to select the initial bounding box for tracking
+3. The app will generate a JSONL file with tracking results
+4. Each frame contains detection information with confidence scores and bounding box coordinates
 
 Support
 -------

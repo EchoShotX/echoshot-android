@@ -111,7 +111,7 @@ class GalleryFragment : Fragment() {
 
     private fun estimateSecondsHigh(durationMs: Long): Int {
         val sec = durationMs / 1000.0
-        return (2.0 + sec * 10.0).roundToInt()
+        return (2.0 + sec * 5.0).roundToInt()
     }
 
     private fun copyUriToFile(ctx: Context, src: Uri, dst: File) {
@@ -392,7 +392,64 @@ class GalleryFragment : Fragment() {
         private const val TAG = "GalleryFragment"
     }
 
+    // NEW: 모드 선택 다이얼로그
+    // NEW: 모드 선택 다이얼로그
+    // NEW: 모드 선택 다이얼로그
     fun showLockedOverlay(uri: Uri) {
+        val v = layoutInflater.inflate(R.layout.dialog_pick_crop_mode, null)
+        val img = v.findViewById<ImageView>(R.id.thumb)
+        val btnAuto = v.findViewById<Button>(R.id.btnAuto)
+        val btnSot  = v.findViewById<Button>(R.id.btnSot)
+
+        Glide.with(this).load(uri).centerCrop().into(img)
+
+        // DISPLAY_NAME -> sessionUuid
+        val fileName = requireContext().contentResolver
+            .query(uri, arrayOf(MediaStore.Video.Media.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst())
+                c.getString(c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME))
+                    .substringBeforeLast('.') else null } ?: run {
+            Toast.makeText(requireContext(), "파일명을 가져올 수 없습니다.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val parts = fileName.split('_')
+        if (parts.size < 2) {
+            Toast.makeText(requireContext(), "잘못된 파일명: $fileName", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val sessionUuid = parts[1]
+
+        // ✅ original만 찾고, 없으면 클릭한 uri로 폴백
+        val originalPrefix = fileName.substringBefore("_zoomed_") + "_original_"
+        val originalUri    = findMediaUri(requireContext(), originalPrefix, "mp4")
+        val videoUriForSot = originalUri ?: uri
+
+        val dialog = AlertDialog.Builder(requireContext())
+            .setView(v)
+            .create().apply { window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)) }
+
+        btnAuto.setOnClickListener {
+            dialog.dismiss()
+            showAutoOverlay(uri) // 기존 자동 다이얼로그
+        }
+
+        btnSot.setOnClickListener {
+            dialog.dismiss()
+            // ✅ SOT는 original만 넘김
+            SotPickerDialogFragment
+                .newInstance(videoUriForSot, sessionUuid)
+                .show(childFragmentManager, "sotPicker")
+        }
+
+        dialog.show()
+        val widthPx = (300 * resources.displayMetrics.density).toInt()
+        dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+
+
+
+    private fun showAutoOverlay(uri: Uri) {
         Log.d(TAG, "▶ showLockedOverlay 호출: uri=$uri")
 
         val dialogView = layoutInflater.inflate(R.layout.dialog_locked_thumbnail, null)
@@ -482,8 +539,8 @@ class GalleryFragment : Fragment() {
         // ▼ 단일 시작 버튼
         btn.setOnClickListener {
             val paddingFactor = when (toggleGroup.checkedButtonId) {
-                R.id.btnCenterMode -> 2f   // 인물중심
-                R.id.btnWideMode   -> 3f   // 와이드
+                R.id.btnCenterMode -> 1.5f   // 인물중심
+                R.id.btnWideMode   -> 2.5f   // 와이드
                 else               -> 2f
             }
             val isHigh = (toggleTrack.checkedButtonId == R.id.btnHighSpec)
@@ -925,7 +982,7 @@ class GalleryFragment : Fragment() {
     }
 
     // 갤러리 새로고침 (간단 버전)
-    private fun refreshGallery() {
+    fun refreshGallery() {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val items = loadVideoItems()
             withContext(Dispatchers.Main) {

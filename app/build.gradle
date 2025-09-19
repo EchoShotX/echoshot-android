@@ -75,7 +75,14 @@ android {
     }
 
     aaptOptions {
-        noCompress "tflite"
+        noCompress "ptl", "pt", "tflite"
+    }
+
+    packaging {
+        jniLibs {
+            // 중복되는 libc++_shared.so는 첫 번째 것만 포함
+            pickFirsts += ["**/libc++_shared.so"]
+        }
     }
 }
 
@@ -148,4 +155,8 @@ dependencies {
     implementation 'androidx.camera:camera-lifecycle:1.3.3'
     implementation 'androidx.camera:camera-view:1.3.3'
     implementation 'androidx.camera:camera-extensions:1.3.3' // (선택)
+
+    implementation project(':opencv') // <- 임포트한 OpenCV 모듈명
+    implementation "org.pytorch:pytorch_android_lite:2.1.0"
+    implementation "org.pytorch:pytorch_android_torchvision_lite:2.1.0"
 }
