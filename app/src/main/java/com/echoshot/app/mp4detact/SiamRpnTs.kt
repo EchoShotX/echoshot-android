@@ -21,7 +21,7 @@ import kotlin.math.*
  */
 class SiamRpnTs(
     private val ctx: Context,
-    private val modelAssetName: String = "siamrpnpp_mobile.ptl",
+    private val modelAssetName: String = "siamrpnpp_mobile.ptl", //siamrpn_mobilev2_l234_dwxcorr
     private val EXEMPLAR: Int = 127,
     private val INSTANCE: Int = 255,
     private val STRIDE: Float = 8f,
