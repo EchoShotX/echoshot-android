@@ -75,13 +75,7 @@ TRACK: penalty_k=0.04, window_influence=0.4, lr=0.5, context_amount=0.5
 - PyTorch Mobile for SiamRPN++ 모델 추론
 - OpenCV for Android for 이미지 처리
 
-## 스크린샷
 
-<img src="screenshots/main.png" height="400" alt="Screenshot"/>
-
-## 빌드 및 실행
-
-이 프로젝트는 Gradle 빌드 시스템을 사용합니다. 프로젝트를 빌드하려면 "gradlew build" 명령을 사용하거나 Android Studio에서 "Import Project"를 사용하세요.
 
 ## 프로젝트 구조
 
