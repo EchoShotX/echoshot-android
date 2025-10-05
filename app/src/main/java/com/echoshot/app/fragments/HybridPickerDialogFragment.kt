@@ -4,9 +4,9 @@ package com.echoshot.app.fragments
 import android.app.Dialog
 import android.content.ContentResolver
 import android.content.ContentUris
+import android.content.Context
 import android.graphics.*
 import android.graphics.drawable.ColorDrawable
-import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -14,7 +14,13 @@ import android.provider.MediaStore
 import android.view.*
 import android.widget.Button
 import android.widget.ImageView
+import android.widget.ProgressBar
+import android.widget.TextView
 import android.widget.Toast
+import com.google.android.material.button.MaterialButtonToggleGroup
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
+import android.media.MediaMetadataRetriever
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
@@ -51,11 +57,13 @@ class HybridPickerDialogFragment : DialogFragment() {
 
     private lateinit var iv: ImageView
     private lateinit var overlay: RectOverlayView
+    private lateinit var toggleCropMode: MaterialButtonToggleGroup
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         val root = layoutInflater.inflate(R.layout.dialog_multi_hybrid_picker, null)
         iv = root.findViewById(R.id.ivFrame)
         overlay = root.findViewById(R.id.overlay)
+        toggleCropMode = root.findViewById(R.id.toggleCropMode)
         val startButton: Button = root.findViewById(R.id.startButton)
         val btnSmaller: Button = root.findViewById(R.id.btnSmaller)
         val btnBigger: Button = root.findViewById(R.id.btnBigger)
@@ -106,6 +114,9 @@ class HybridPickerDialogFragment : DialogFragment() {
         // 크기 조절 버튼
         btnSmaller.setOnClickListener { overlay.nudgeScale(0.9f) }
         btnBigger.setOnClickListener  { overlay.nudgeScale(1.1f) }
+        
+        // 기본 모드 설정 (인물중심 모드 선택)
+        toggleCropMode.check(R.id.btnCenterMode)
 
         startButton.setOnClickListener {
             val rView = overlay.getRectViewSpace()
@@ -133,6 +144,11 @@ class HybridPickerDialogFragment : DialogFragment() {
             }
 
             startButton.isEnabled = false; startButton.text = "실행 중…"
+
+            // ETA 계산 및 진행 다이얼로그 표시
+            val durMs = getVideoDurationMs(requireContext(), originalUri)
+            val etaSec = estimateSecondsHigh(durMs)
+            showBlockingProgress(etaSec)
 
             // 하이브리드 프로세서 실행 (탐지는 original에서)
             android.util.Log.d("HybridPicker", "탐지 대상 비디오: ${originalUri}")
@@ -183,18 +199,28 @@ class HybridPickerDialogFragment : DialogFragment() {
                             android.util.Log.d("HybridPicker", "크롭 대상 비디오: ${cropVideoUri}")
                             android.util.Log.d("HybridPicker", "탐지=크롭: ${detectVideoUri == cropVideoUri}")
 
+                            // 선택된 모드에 따른 paddingFactor 결정
+                            val paddingFactor = when (toggleCropMode.checkedButtonId) {
+                                R.id.btnCenterMode -> 1.5f  // 인물중심 모드
+                                R.id.btnWideMode -> 2.5f    // 와이드 모드
+                                else -> 2.0f                // 기본값 (노설정)
+                            }
+                            
+                            android.util.Log.d("HybridPicker", "선택된 모드: ${if (toggleCropMode.checkedButtonId == R.id.btnCenterMode) "인물중심" else "와이드"}, paddingFactor: $paddingFactor")
+                            
                             val cropped = com.echoshot.app.VideoPipeline.processSessionFromLog(
                                 context = ctx,
                                 sessionId = sessionUuid,
                                 srcVideoUri = cropVideoUri,
                                 fps = 30,
-                                paddingFactor = 2.0f,
+                                paddingFactor = paddingFactor,
                                 logFile = result.mergedLocalFile,
                                 format = com.echoshot.app.LogFormat.MERGED_JSONL
                             )
 
                             withContext(Dispatchers.Main) {
                                 if (!isAdded) return@withContext  // 안전장치
+                                dismissBlockingProgress()
                                 if (cropped != null) {
                                     Toast.makeText(ctx, "병합 + 크롭 완료!", Toast.LENGTH_SHORT).show()
                                     dismissAllowingStateLoss()
@@ -206,6 +232,7 @@ class HybridPickerDialogFragment : DialogFragment() {
                         } catch (e: Throwable) {
                             withContext(Dispatchers.Main) {
                                 if (!isAdded) return@withContext
+                                dismissBlockingProgress()
                                 Toast.makeText(ctx, "후처리 실패: ${e.message}", Toast.LENGTH_LONG).show()
                                 startButton.isEnabled = true; startButton.text = "시작"
                             }
@@ -213,8 +240,13 @@ class HybridPickerDialogFragment : DialogFragment() {
                     }
                 },
                 onError = { e ->
-                    Toast.makeText(requireContext(), "하이브리드 추적 실패: ${e.message}", Toast.LENGTH_LONG).show()
-                    dismissAllowingStateLoss()
+                    lifecycleScope.launch {
+                        if (!isAdded) return@launch
+                        dismissBlockingProgress()
+                        Toast.makeText(requireContext(), "하이브리드 추적 실패: ${e.message}", Toast.LENGTH_LONG).show()
+                        startButton.isEnabled = true
+                        startButton.text = "시작"
+                    }
                 }
             )
         }
@@ -316,6 +348,83 @@ class HybridPickerDialogFragment : DialogFragment() {
                 glDispatcher.close()
             }
         }
+    }
+
+    private fun estimateSecondsHigh(durationMs: Long): Int {
+        val sec = durationMs / 1000.0
+        return (2.0 + sec * 5.0).roundToInt()
+    }
+
+    // ===== 진행 다이얼로그 =====
+    private var progressDialog: AlertDialog? = null
+    private var progressTickerJob: kotlinx.coroutines.Job? = null
+
+    private fun showBlockingProgress(etaSec: Int) {
+        dismissBlockingProgress() // 혹시 남아 있으면 정리
+
+        val v = layoutInflater.inflate(R.layout.dialog_progress_blocking, null)
+        val tvTitle = v.findViewById<TextView>(R.id.tvTitle)
+        val tvSubtitle = v.findViewById<TextView>(R.id.tvSubtitle)
+        val tvNote = v.findViewById<TextView>(R.id.tvNote)
+        val bar = v.findViewById<ProgressBar>(R.id.progressDeterminate)
+        val spin = v.findViewById<ProgressBar>(R.id.progressIndeterminate)
+
+        // 초기 상태: ETA 기반 가변 진행률
+        bar.visibility = View.VISIBLE
+        spin.visibility = View.GONE
+        tvSubtitle.text = "예상 약 ${etaSec}초"
+
+        progressDialog = AlertDialog.Builder(requireContext())
+            .setView(v)
+            .setCancelable(false)
+            .create().apply {
+                window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                // Back 키로도 닫히지 않게
+                setOnKeyListener { _, keyCode, _ ->
+                    keyCode == android.view.KeyEvent.KEYCODE_BACK
+                }
+                show()
+                // 사이즈
+                window?.setLayout(
+                    (300 * resources.displayMetrics.density).toInt(),
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            }
+
+        // 1초마다 진행률 업데이트 (ETA를 넘기면 무한 로딩으로 전환)
+        val start = System.currentTimeMillis()
+        progressTickerJob = lifecycleScope.launch(Dispatchers.Main) {
+            while (true) {
+                val elapsedSec = ((System.currentTimeMillis() - start) / 1000.0).toInt()
+                if (elapsedSec <= etaSec && etaSec > 0) {
+                    val pct = ((elapsedSec.toDouble() / etaSec) * 100).coerceIn(0.0, 99.0).toInt()
+                    bar.progress = pct
+                    val remain = (etaSec - elapsedSec).coerceAtLeast(0)
+                    tvSubtitle.text = "예상 약 ${remain}초 남음"
+                } else {
+                    // ETA 초과 → 무한 로딩으로
+                    bar.visibility = View.GONE
+                    spin.visibility = View.VISIBLE
+                    tvSubtitle.text = "조금만 더 기다려주세요…"
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    private fun dismissBlockingProgress() {
+        progressTickerJob?.cancel()
+        progressTickerJob = null
+        progressDialog?.dismiss()
+        progressDialog = null
+    }
+
+    private fun getVideoDurationMs(ctx: Context, uri: Uri): Long {
+        val r = MediaMetadataRetriever()
+        return try {
+            r.setDataSource(ctx, uri)
+            (r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0L)
+        } finally { r.release() }
     }
 
     private fun findLatestMediaUri(

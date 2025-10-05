@@ -131,13 +131,12 @@ class CroppedPagerDialogFragment : DialogFragment() {
                 }
             }
 
-            /** 새로 만들기 페이지 (기존 showLockedOverlay 재사용) */
+            /** 새로 만들기 페이지 (dialog_pick_crop_mode와 동일한 선택 UI) */
             inner class AddVH(v: View) : RecyclerView.ViewHolder(v) {
                 fun bind(uuid: String) {
-                    val thumb       = itemView.findViewById<ImageView>(R.id.lockedThumbnail)
-                    val btnStart    = itemView.findViewById<Button>(R.id.startButton)
-                    val toggleCrop  = itemView.findViewById<MaterialButtonToggleGroup>(R.id.toggleCropMode)
-                    val toggleTrack = itemView.findViewById<MaterialButtonToggleGroup>(R.id.toggleTrackMode)
+                    val thumb = itemView.findViewById<ImageView>(R.id.thumb)
+                    val btnAuto = itemView.findViewById<Button>(R.id.btnAuto)
+                    val btnSot = itemView.findViewById<Button>(R.id.btnSot)
 
                     // 기준 영상: zoomed 우선 → original
                     val base = findFirstVideoByPrefix(itemView.context, "VID_${uuid}_zoomed_")
@@ -146,11 +145,7 @@ class CroppedPagerDialogFragment : DialogFragment() {
                     if (base != null) Glide.with(thumb).load(base).centerCrop().into(thumb)
                     else thumb.setImageDrawable(null)
 
-                    // 기본 선택: 인물중심 + 저사양
-                    if (toggleCrop.checkedButtonId == View.NO_ID)  toggleCrop.check(R.id.btnCenterMode)
-                    if (toggleTrack.checkedButtonId == View.NO_ID) toggleTrack.check(R.id.btnLowSpec)
-
-                    // 파일명에서 sessionUuid 추출(오버레이 로직 동일)
+                    // 파일명에서 sessionUuid 추출
                     val fileName = if (base != null)
                         requireContext().contentResolver
                             .query(base, arrayOf(MediaStore.Video.Media.DISPLAY_NAME), null, null, null)
@@ -160,119 +155,40 @@ class CroppedPagerDialogFragment : DialogFragment() {
                                         .substringBeforeLast('.')
                                 else null
                             } else null
+
                     if (base == null || fileName == null) {
-                        btnStart.text = "기준 영상 없음"
-                        btnStart.isEnabled = false
+                        Toast.makeText(requireContext(), "기준 영상을 찾을 수 없습니다.", Toast.LENGTH_SHORT).show()
                         return
                     }
+
                     val parts = fileName.split('_')
                     if (parts.size < 2) {
-                        btnStart.text = "잘못된 파일명"
-                        btnStart.isEnabled = false
+                        Toast.makeText(requireContext(), "잘못된 파일명: $fileName", Toast.LENGTH_SHORT).show()
                         return
                     }
                     val sessionUuid = parts[1]
 
-                    // ETA 라벨 갱신 (저사양: base 길이 / 고사양: detect 대상 길이)
-                    fun updateStartLabel() {
-                        val isHigh = (toggleTrack.checkedButtonId == R.id.btnHighSpec)
-                        val videoUriForDetect =
-                            findMediaUriViaParent("VID_${sessionUuid}_original_", "mp4")
-                                ?: findMediaUriViaParent("VID_${sessionUuid}_zoomed_", "mp4")
-                                ?: base
-                        val etaMs = if (isHigh)
-                            getVideoDurationMs(requireContext(), videoUriForDetect)
-                        else
-                            getVideoDurationMs(requireContext(), base)
+                    // original만 찾고, 없으면 클릭한 uri로 폴백
+                    val originalPrefix = fileName.substringBefore("_zoomed_") + "_original_"
+                    val originalUri = findMediaUriViaParent(originalPrefix, "mp4")
+                    val videoUriForSot = originalUri ?: base
 
-                        val etaSec = if (isHigh) estimateSecondsHigh(etaMs) else estimateSeconds(etaMs)
-                        val mode = if (isHigh) "고사양" else "저사양"
-                        btnStart.text = "시작 ($mode)\n예상시간: ${etaSec}초"
+                    // 자동 구도 생성 버튼
+                    btnAuto.setOnClickListener {
+                        // MakeAutoDetactionFragment 실행
+                        MakeAutoDetactionFragment
+                            .newInstance(base)
+                            .show(parentFragmentManager, "autoDetect")
+                        dismissAllowingStateLoss()
                     }
-                    updateStartLabel()
-                    toggleCrop.addOnButtonCheckedListener { _, _, _ -> updateStartLabel() }
-                    toggleTrack.addOnButtonCheckedListener { _, _, _ -> updateStartLabel() }
 
-                    // 시작 버튼: 저사양→부모 파이프라인, 고사양→로그 생성/병합 후 즉시 크롭
-                    btnStart.setOnClickListener {
-                        val paddingFactor = when (toggleCrop.checkedButtonId) {
-                            R.id.btnCenterMode -> 2f
-                            R.id.btnWideMode   -> 3f
-                            else               -> 2f
-                        }
-                        val isHigh = (toggleTrack.checkedButtonId == R.id.btnHighSpec)
-
-                        if (!isHigh) {
-                            // 저사양: 기존 로그 기반 빠른 크롭 (부모 함수 그대로 재사용)
-                            (parentFragment as? GalleryFragment)?.startCropFromBase(base, paddingFactor)
-                            dismissAllowingStateLoss()
-                            return@setOnClickListener
-                        }
-
-                        // 고사양: 로그 2종 생성+병합 → 병합 로그로 즉시 크롭
-                        val videoUriForDetect =
-                            findMediaUriViaParent("VID_${sessionUuid}_original_", "mp4")
-                                ?: findMediaUriViaParent("VID_${sessionUuid}_zoomed_", "mp4")
-                                ?: base
-
-                        val trackingUri = findMediaUriViaParent("tracking_log_${sessionUuid}", "json")
-                        val tsUri       = findMediaUriViaParent("tracking_log_${sessionUuid}_frame_ts", "json")
-
-                        val etaSec = estimateSecondsHigh(getVideoDurationMs(requireContext(), videoUriForDetect))
-                        showBlockingProgress(etaSec)
-
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            try {
-                                val res = LogOrchestrator.makeBothLogsAndMerge(
-                                    ctx = requireContext(),
-                                    sessionUuid = sessionUuid,
-                                    videoUriForDetect = videoUriForDetect,
-                                    trackingUri = trackingUri,
-                                    tsUri = tsUri,
-                                    filesDir = requireContext().filesDir,
-                                    onStage = { stage, note -> Log.d("LogOrchestrator", "stage=$stage note=$note") }
-                                )
-                                val mergedLogUri = res.mergedOutUri
-
-                                val fpsForCrop =
-                                    getVideoFps(requireContext(), base)
-                                        ?: getVideoFps(requireContext(), videoUriForDetect)
-                                        ?: 30
-
-                                val mergedFile: File = when (mergedLogUri.scheme) {
-                                    "file" -> File(mergedLogUri.path!!)
-                                    else   -> File(requireContext().filesDir, "${sessionUuid}_merged.jsonl")
-                                        .also { copyUriToFile(requireContext(), mergedLogUri, it) }
-                                }
-
-                                val out = cropVideoFromLog(
-                                    sessionUuid       = sessionUuid,
-                                    outputJson        = mergedFile,
-                                    videoUriToProcess = base,
-                                    fps               = fpsForCrop,
-                                    paddingFactor     = paddingFactor,   // 인물/와이드 반영
-                                    logFormat         = LogFormat.MERGED_JSONL
-                                )
-
-                                withContext(Dispatchers.Main) {
-                                    dismissBlockingProgress()
-                                    Toast.makeText(requireContext(), "로그 2종+병합+크롭 완료!", Toast.LENGTH_SHORT).show()
-                                    (parentFragment as? GalleryFragment)?.let {
-                                        it.viewLifecycleOwner.lifecycleScope.launch { it.refreshGallery() }
-                                    }
-                                    dismissAllowingStateLoss()
-                                }
-                            } catch (e: Throwable) {
-                                Log.e("LogOrchestrator", "failed", e)
-                                withContext(Dispatchers.Main) {
-                                    dismissBlockingProgress()
-                                    AlertDialog.Builder(requireContext())
-                                        .setMessage("로그 생성/병합 실패:\n${e.message}")
-                                        .setPositiveButton("닫기", null)
-                                        .show()
-                                }
-                            }
-                        }
+                    // 인물 선택 구도 생성(SOT) 버튼
+                    btnSot.setOnClickListener {
+                        // HybridPickerDialogFragment 실행
+                        HybridPickerDialogFragment
+                            .newInstance(videoUriForSot, sessionUuid)
+                            .show(parentFragmentManager, "hybridPicker")
+                        dismissAllowingStateLoss()
                     }
                 }
             }
