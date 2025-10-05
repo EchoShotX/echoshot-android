@@ -66,6 +66,8 @@ object VideoPipeline {
         val origTakenMs = queryDateTakenMs(context, srcVideoUri)
 
         // 1) 로그 존재 확인
+        Log.d(TAG, "로그 파일 확인: ${logFile.absolutePath}")
+        Log.d(TAG, "로그 파일 존재: ${logFile.exists()}, 크기: ${logFile.length()}")
         if (!logFile.exists() || logFile.length() == 0L) {
             Log.w(TAG, "로그 파일이 없거나 비어있음: ${logFile.absolutePath}")
             return null
@@ -74,6 +76,13 @@ object VideoPipeline {
         // 2) 원본 비디오를 내부(filesDir)로 복사
         val filesDir = context.filesDir
         val srcVideoFile = File(filesDir, "$sessionId.mp4")
+        
+        // 비디오 타입 확인 (original vs zoomed)
+        val isOriginal = srcVideoUri.toString().contains("_original_")
+        val videoType = if (isOriginal) "original" else "zoomed"
+        Log.d(TAG, "크롭 대상 비디오: $videoType (${srcVideoUri})")
+        Log.d(TAG, "내부 파일명: ${srcVideoFile.absolutePath}")
+        
         context.contentResolver.openInputStream(srcVideoUri)?.use { inp ->
             FileOutputStream(srcVideoFile).use { out -> inp.copyTo(out) }
         }
