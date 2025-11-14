@@ -79,6 +79,14 @@
         android:layout_height="match_parent"
         android:layout_marginTop="50dp" />
 
+    <FrameLayout
+        android:id="@+id/overlay_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="50dp"
+        android:clipChildren="false"
+        android:clipToPadding="false"/>
+
     <!-- 🎯 녹화 버튼: 가장 아래 -->
     <LinearLayout
         android:id="@+id/bottom_button_group"

@@ -28,6 +28,7 @@ class RectOverlayView @JvmOverloads constructor(
     private var lastX = 0f
     private var lastY = 0f
     private val hit = 30f
+    
 
     // 최초 호출 시 중앙에 정사각형 기본 박스
     fun ensureDefault() {
@@ -43,6 +44,7 @@ class RectOverlayView @JvmOverloads constructor(
     }
 
     fun getRectViewSpace(): RectF = RectF(r)
+    
 
     /** 크기를 비율로 키우거나 줄임 (정사각 유지) */
     fun nudgeScale(mult: Float) {
@@ -123,4 +125,5 @@ class RectOverlayView @JvmOverloads constructor(
         val nearBottom = y in (r.bottom - hit)..(r.bottom + hit)&& x in (r.left - hit)..(r.right + hit)
         return nearLeft || nearRight || nearTop || nearBottom
     }
+    
 }

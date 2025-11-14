@@ -1,10 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/photo_camera_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000">
 
-    <!-- 상단 바 -->
     <LinearLayout
         android:id="@+id/top_bar"
         android:layout_width="match_parent"
@@ -15,6 +16,7 @@
         android:paddingStart="12dp"
         android:paddingEnd="12dp">
 
+        <!-- 왼쪽 아이콘 -->
         <ImageView
             android:id="@+id/icon_fullratio"
             android:layout_width="24dp"
@@ -22,11 +24,13 @@
             android:src="@drawable/fullratio"
             android:contentDescription="Fullratio" />
 
+        <!-- 중간 여백 -->
         <Space
             android:layout_width="0dp"
             android:layout_height="1dp"
             android:layout_weight="1" />
 
+        <!-- 가운데 아이콘 -->
         <ImageView
             android:id="@+id/icon_nozoom"
             android:layout_width="24dp"
@@ -34,6 +38,7 @@
             android:src="@drawable/nozoom"
             android:contentDescription="Nozoom_Mode" />
 
+        <!-- 중간 여백 -->
         <Space
             android:layout_width="0dp"
             android:layout_height="1dp"
@@ -51,6 +56,7 @@
             android:layout_height="1dp"
             android:layout_weight="1" />
 
+        <!-- 오른쪽 아이콘 -->
         <ImageView
             android:id="@+id/icon_setting"
             android:layout_width="24dp"
@@ -61,13 +67,19 @@
     </LinearLayout>
 
     <!-- 카메라 프리뷰 -->
-    <com.example.android.camera.utils.AutoFitSurfaceView
+    <androidx.camera.view.PreviewView
         android:id="@+id/view_finder"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_marginTop="50dp" />
+        android:layout_marginTop="50dp"
+        app:implementationMode="performance"
+        app:scaleType="fitCenter" />
 
-    <!-- ⬇️ 모드 스위치 바 (사진/동영상) -->
+
+
+    <!-- 전면 카메라는 줌 미지원이므로 줌 UI 제거 -->
+
+    <!-- ⬇️ 모드 스위치 바 (사진/동영상) — 줌 슬라이더 바로 아래 -->
     <LinearLayout
         android:id="@+id/mode_switch_bar"
         android:layout_width="match_parent"
@@ -84,6 +96,12 @@
             android:id="@+id/slot_left"
             android:layout_width="0dp"
             android:layout_height="match_parent"
+            android:layout_weight="1" />
+
+        <FrameLayout
+            android:id="@+id/slot_center"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
             android:layout_weight="1">
 
             <!-- 초기: 사진 활성화 → 중앙에 사진 -->
@@ -98,12 +116,11 @@
                 android:text="사진"
                 android:textStyle="bold"
                 android:textColor="@android:color/white"
-                android:background="@drawable/mode_chip_inactive" />
-
+                android:background="@drawable/mode_chip_active" />
         </FrameLayout>
 
         <FrameLayout
-            android:id="@+id/slot_center"
+            android:id="@+id/slot_right"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1">
@@ -120,18 +137,10 @@
                 android:text="동영상"
                 android:textStyle="bold"
                 android:textColor="@android:color/white"
-                android:background="@drawable/mode_chip_active" />
-
+                android:background="@drawable/mode_chip_inactive" />
         </FrameLayout>
-
-        <FrameLayout
-            android:id="@+id/slot_right"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"/>
     </LinearLayout>
 
-    <!-- 하단 버튼 그룹 -->
     <LinearLayout
         android:id="@+id/bottom_button_group"
         android:layout_width="wrap_content"
@@ -141,6 +150,7 @@
         android:orientation="horizontal"
         android:gravity="center">
 
+        <!-- 갤러리 버튼 -->
         <ImageButton
             android:id="@+id/gallery_button"
             android:layout_width="48dp"
@@ -151,14 +161,13 @@
             android:clickable="true"
             android:focusable="true" />
 
+
         <ImageButton
             android:id="@+id/capture_button"
-            android:layout_width="96dp"
-            android:layout_height="96dp"
-            android:scaleType="fitCenter"
+            android:layout_width="88dp"
+            android:layout_height="88dp"
             android:background="@drawable/ic_shutter"
-            app:tint="@android:color/holo_red_dark"
-            android:contentDescription="@string/capture" />
+            android:contentDescription="Capture Photo" />
 
         <ImageButton
             android:id="@+id/switch_camera_button"
@@ -166,21 +175,10 @@
             android:layout_height="48dp"
             android:layout_marginStart="32dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:padding="4dp"
+            android:scaleType="centerInside"
             android:src="@drawable/ic_camera_switch"
             app:tint="@android:color/white"
-            android:clickable="true"
-            android:focusable="true" />
+            android:contentDescription="Switch Camera" />
     </LinearLayout>
-
-    <!-- 촬영 타이머 -->
-    <Chronometer
-        android:id="@+id/capture_timer"
-        android:layout_width="96dp"
-        android:layout_height="96dp"
-        android:layout_gravity="bottom|right"
-        android:textColor="@android:color/holo_red_light"
-        android:scaleType="fitCenter"
-        android:visibility="gone" />
 
 </FrameLayout>

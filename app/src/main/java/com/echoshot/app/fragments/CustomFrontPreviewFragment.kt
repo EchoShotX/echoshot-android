@@ -36,6 +36,14 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.MimeTypeMap
 import android.widget.Toast
+import android.widget.SeekBar
+import android.widget.LinearLayout
+import android.widget.FrameLayout
+import android.view.Gravity
+import android.graphics.Color
+import android.graphics.Paint
+import android.util.Range
+import android.util.Rational
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
@@ -110,6 +118,9 @@ class CustomFrontPreviewFragment : Fragment() {
         cameraManager.getCameraCharacteristics(args.cameraId)
     }
 
+    //밝기 초점 조정용 프리뷰 사이즈
+    private var currentPreviewSize: Size? = null
+
     /** File where the recording will be saved */
     private val outputFile: File by lazy { createFile(requireContext(), "mp4") }
 
@@ -145,6 +156,42 @@ class CustomFrontPreviewFragment : Fragment() {
     private val cvRecordingStarted = ConditionVariable(false)
     private val cvRecordingComplete = ConditionVariable(false)
 
+    // ===== Overlay & EV state =====
+    private lateinit var overlayContainer: FrameLayout
+    private lateinit var focusRing: FocusRingView
+    private lateinit var evBarContainer: LinearLayout
+    private lateinit var evSeek: SeekBar
+    private var evHideRunnable: Runnable? = null
+    private var aeCompRange: Range<Int>? = null
+    private var aeCompStep: Rational? = null
+    private var currentAeComp: Int = 0
+    private var evDragging = false
+    private var evStartX = 0f
+    private var evStartComp = 0
+    private val EV_PIXELS_PER_STEP = 20f  // 감도 2배 증가 (값이 작을수록 감도 높음)
+    private fun dp(v: Int) = (resources.displayMetrics.density * v + 0.5f).toInt()
+
+    private class FocusRingView(context: Context) : View(context) {
+        var cx = 0f; var cy = 0f; var radius = 70f
+        private val p1 = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 4f; color = Color.WHITE
+        }
+        private val p2 = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 8f; color = Color.BLACK; alpha = 80
+        }
+        fun showAt(x: Float, y: Float) {
+            cx = x; cy = y; alpha = 1f; scaleX = 1.2f; scaleY = 1.2f
+            visibility = View.VISIBLE
+            animate().scaleX(1f).scaleY(1f).setDuration(150).start()
+            removeCallbacks(hideRun); postDelayed(hideRun, 1200)
+            invalidate()
+        }
+        private val hideRun = Runnable {
+            animate().alpha(0f).setDuration(160).withEndAction { visibility = GONE }.start()
+        }
+        override fun onDraw(c: android.graphics.Canvas) { c.drawCircle(cx, cy, radius, p2); c.drawCircle(cx, cy, radius, p1) }
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
     ): View {
@@ -176,12 +223,124 @@ class CustomFrontPreviewFragment : Fragment() {
                 val previewSize = getPreviewOutputSize(
                     fragmentBinding.viewFinder.display, characteristics, SurfaceHolder::class.java
                 )
+                currentPreviewSize = previewSize
+
                 fragmentBinding.viewFinder.setAspectRatio(previewSize.width, previewSize.height)
                 pipeline.setPreviewSize(previewSize)
 
                 fragmentBinding.viewFinder.post {
                     pipeline.createResources(holder.surface)
                     initializeCamera() // ★ front 카메라로만 연다
+                }
+
+                // ===== Overlay container + focus ring =====
+                (view as? ViewGroup)?.let { root ->
+                    overlayContainer = FrameLayout(requireContext()).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        isClickable = false
+                    }
+                    root.addView(overlayContainer)
+
+                    focusRing = FocusRingView(requireContext()).apply {
+                        visibility = View.GONE
+                        layoutParams = FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                            FrameLayout.LayoutParams.MATCH_PARENT
+                        )
+                    }
+                    overlayContainer.addView(focusRing)
+
+                    // ===== EV bar (hidden by default) =====
+                    evBarContainer = LinearLayout(requireContext()).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, 0, 0, 0)
+                        background = null
+                        gravity = Gravity.CENTER_VERTICAL
+                        alpha = 0f; visibility = View.GONE
+                    }
+                    evSeek = SeekBar(requireContext()).apply {
+                        layoutParams = LinearLayout.LayoutParams(dp(73), dp(14)).apply { leftMargin = dp(10) }
+                        setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                                val r = aeCompRange ?: return
+                                val target = r.lower + p
+                                if (target != currentAeComp) applyExposureComp(target)
+                                scheduleHideEvBar(2000)
+                            }
+                            override fun onStartTrackingTouch(sb: SeekBar?) {}
+                            override fun onStopTrackingTouch(sb: SeekBar?) { scheduleHideEvBar(2000) }
+                        })
+                        val trackHeight = dp(2)
+                        val thumbWidth = dp(2)
+                        val thumbHeight = dp(14)
+                        val bg = android.graphics.drawable.GradientDrawable().apply {
+                            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                            setColor(Color.WHITE)
+                            alpha = 140
+                            cornerRadius = dp(1).toFloat()
+                        }
+                        val prog = android.graphics.drawable.GradientDrawable().apply {
+                            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                            setColor(Color.WHITE)
+                            cornerRadius = dp(1).toFloat()
+                        }
+                        val layer = android.graphics.drawable.LayerDrawable(arrayOf(bg, prog)).apply {
+                            setId(0, android.R.id.background)
+                            setId(1, android.R.id.progress)
+                        }
+                        splitTrack = false
+                        progressDrawable = layer
+                        setPadding(0, dp(6), 0, dp(6))
+                        val thumbDrawable = android.graphics.drawable.GradientDrawable().apply {
+                            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                            setColor(Color.WHITE)
+                            setSize(thumbWidth, thumbHeight)
+                        }
+                        thumb = thumbDrawable
+                        minHeight = trackHeight + dp(12)
+                    }
+                    evBarContainer.addView(evSeek)
+                    overlayContainer.addView(
+                        evBarContainer,
+                        FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.WRAP_CONTENT,
+                            FrameLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { gravity = Gravity.TOP or Gravity.START }
+                    )
+
+                    // Tap: show focus ring and EV under finger
+                    fragmentBinding.viewFinder.setOnTouchListener { _, ev ->
+                        when (ev.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> {
+                                val (ox, oy) = toOverlayXY(ev)
+                                focusRing.showAt(ox, oy)
+                                syncEvFromChars()
+                                placeAndShowEv(ox, oy)
+                                // 탭 지점 기준으로 즉시 EV 재설정
+                                setEvByTapAbsolute(ev.x)
+                                // 드래그 준비
+                                evDragging = true
+                                evStartX = ev.x
+                                evStartComp = currentAeComp
+                            }
+                            MotionEvent.ACTION_MOVE -> {
+                                if (evDragging) {
+                                    val deltaPx = ev.x - evStartX
+                                    val steps = (deltaPx / EV_PIXELS_PER_STEP).toInt()
+                                    applyExposureComp(evStartComp + steps)
+                                    scheduleHideEvBar(2000)
+                                }
+                            }
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                evDragging = false
+                                scheduleHideEvBar(2000)
+                            }
+                        }
+                        true
+                    }
                 }
                 fragmentBinding.switchCameraButton.setOnClickListener {
                     val backId = getBackCameraId()
@@ -214,6 +373,35 @@ class CustomFrontPreviewFragment : Fragment() {
             }
 
         })
+
+        // ✅ 모드 스위치: 사진 버튼 → PhotoFrontFragment로 이동
+        fragmentBinding.btnModePhoto.setOnClickListener {
+            val a = args
+            val action = CustomFrontPreviewFragmentDirections
+                .actionCustomFrontPreviewFragmentToPhotoFrontFragment(
+                    a.cameraId,
+                    a.width,
+                    a.height,
+                    a.fps,
+                    a.dynamicRange,
+                    a.colorSpace,
+                    a.previewStabilization,
+                    a.useMediaRecorder,
+                    a.videoCodec,
+                    a.filterOn,
+                    a.transfer,
+                    a.useHardware,
+                    a.pipelineMode
+                ).apply {
+                    a.forcePhysicalId?.let { setForcePhysicalId(it) }
+                }
+            findNavController().navigate(action)
+        }
+
+        // (선택) 동영상 버튼은 현재 화면이 동영상이므로 눌러도 변화 없게 or 토스트만
+        fragmentBinding.btnModeVideo.setOnClickListener {
+            Toast.makeText(requireContext(), "이미 동영상 모드입니다", Toast.LENGTH_SHORT).show()
+        }
 
         fragmentBinding.galleryButton.setOnClickListener {
             Toast.makeText(requireContext(), "갤러리로 이동", Toast.LENGTH_SHORT).show()
@@ -410,6 +598,7 @@ class CustomFrontPreviewFragment : Fragment() {
         recordingStarted = false
     }
 
+
     /**
      * 전면 카메라만 열어 프리뷰/녹화 세션 구성
      */
@@ -516,6 +705,75 @@ class CustomFrontPreviewFragment : Fragment() {
             device.createCaptureSession(targets, stateCallback, handler)
             return false
         }
+    }
+
+    // ===== EV helpers =====
+    private fun toOverlayXY(ev: MotionEvent): Pair<Float, Float> {
+        val loc = IntArray(2)
+        overlayContainer.getLocationOnScreen(loc)
+        return (ev.rawX - loc[0]) to (ev.rawY - loc[1])
+    }
+
+    private fun syncEvFromChars() {
+        try {
+            aeCompRange = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+            aeCompStep  = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
+        } catch (_: Throwable) {}
+        val r = aeCompRange
+        if (r != null) {
+            val cur = currentAeComp.coerceIn(r.lower, r.upper)
+            evSeek.max = (r.upper - r.lower)
+            evSeek.progress = (cur - r.lower).coerceIn(0, evSeek.max)
+            evSeek.isEnabled = evSeek.max > 0
+        } else {
+            evSeek.max = 0
+            evSeek.progress = 0
+            evSeek.isEnabled = false
+        }
+    }
+
+    private fun placeAndShowEv(x: Float, y: Float) {
+        val lp = evBarContainer.layoutParams as FrameLayout.LayoutParams
+        val half = if (evSeek.width > 0) evSeek.width / 2f else dp(120) / 2f
+        lp.leftMargin = (x - half).toInt().coerceAtLeast(0)
+        lp.topMargin = (y + dp(20)).toInt().coerceAtLeast(0)
+        evBarContainer.layoutParams = lp
+        evBarContainer.visibility = View.VISIBLE
+        evBarContainer.alpha = 1f
+        scheduleHideEvBar(1800)
+    }
+
+    private fun scheduleHideEvBar(delayMs: Long = 1400L) {
+        evHideRunnable?.let { evBarContainer.removeCallbacks(it) }
+        evHideRunnable = Runnable {
+            evBarContainer.animate().alpha(0f).setDuration(140)
+                .withEndAction { evBarContainer.visibility = View.GONE }.start()
+        }
+        evBarContainer.postDelayed(evHideRunnable!!, delayMs)
+    }
+
+    private fun applyExposureComp(target: Int) {
+        val r = aeCompRange ?: return
+        currentAeComp = target.coerceIn(r.lower, r.upper)
+        val builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            pipeline.getPreviewTargets().forEach { addTarget(it) }
+            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, currentAeComp)
+        }
+        session.setRepeatingRequest(builder.build(), null, cameraHandler)
+        // 슬라이더와 동기화
+        val max = (r.upper - r.lower)
+        evSeek.max = max
+        evSeek.progress = (currentAeComp - r.lower).coerceIn(0, max)
+    }
+
+    private fun setEvByTapAbsolute(xInView: Float) {
+        val r = aeCompRange ?: return
+        val w = view?.findViewById<View>(R.id.view_finder)?.width?.coerceAtLeast(1) ?: return
+        val t = (xInView / w.toFloat()).coerceIn(0f, 1f)
+        val target = (r.lower + t * (r.upper - r.lower)).toInt()
+        applyExposureComp(target)
     }
 
     private suspend fun createCaptureSession(

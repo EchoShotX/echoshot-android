@@ -594,6 +594,12 @@
         <argument android:name="filterOn" app:argType="boolean" />
         <argument android:name="transfer" app:argType="integer" />
         <argument android:name="useHardware" app:argType="boolean" />
+        <argument android:name="pipelineMode" app:argType="string" app:nullable="false" />
+        <argument
+            android:name="forcePhysicalId"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
 
         <action
             android:id="@+id/action_customFrontPreview_to_customPreview"
@@ -601,12 +607,15 @@
         <action
             android:id="@+id/action_customFrontPreviewFragment_to_galleryFragment"
             app:destination="@id/gallery_fragment" />
+        <action
+            android:id="@+id/action_customFrontPreviewFragment_to_photoFrontFragment"
+            app:destination="@id/photoFrontFragment" />
 
     </fragment>
 
     <fragment
         android:id="@+id/photoFragment"
-        android:name="com.echoshot.app.ui.PhotoFragment"
+        android:name="com.echoshot.app.fragments.PhotoFragment"
         android:label="PhotoFragment">
 
         <!-- 동영상 설정 전체를 수신 -->
@@ -636,6 +645,44 @@
         <action
             android:id="@+id/action_photoFragment_to_customPreviewFragment"
             app:destination="@id/custom_preview_fragment" />
+        <action
+            android:id="@+id/action_photoFragment_to_photoFrontFragment"
+            app:destination="@id/photoFrontFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/photoFrontFragment"
+        android:name="com.echoshot.app.fragments.PhotoFrontFragment"
+        android:label="PhotoFrontFragment">
+
+        <!-- 동영상 설정 전체를 수신 -->
+        <argument android:name="camera_id"            app:argType="string"  app:nullable="false"/>
+        <argument android:name="width"                 app:argType="integer"/>
+        <argument android:name="height"                app:argType="integer"/>
+        <argument android:name="fps"                   app:argType="integer"/>
+        <argument android:name="dynamicRange"          app:argType="long"/>
+        <argument android:name="colorSpace"            app:argType="integer"/>
+        <argument android:name="previewStabilization"  app:argType="boolean"/>
+        <argument android:name="useMediaRecorder"      app:argType="boolean"/>
+        <argument android:name="videoCodec"            app:argType="integer"/>
+        <argument android:name="filterOn"              app:argType="boolean"/>
+        <argument android:name="transfer"              app:argType="integer"/>
+        <argument android:name="useHardware"           app:argType="boolean"/>
+        <argument android:name="pipelineMode"          app:argType="string" app:nullable="false"/>
+        <argument
+            android:name="forcePhysicalId"
+            app:argType="string"
+            app:nullable="true"
+            android:defaultValue="@null" />
+
+        <!-- 전면 → 후면 액션 -->
+        <action
+            android:id="@+id/action_photoFrontFragment_to_photoFragment"
+            app:destination="@id/photoFragment" />
+        <!-- 전면 사진 → 전면 동영상 액션 -->
+        <action
+            android:id="@+id/action_photoFrontFragment_to_customFrontPreviewFragment"
+            app:destination="@id/custom_front_preview_fragment" />
     </fragment>
 
     <fragment

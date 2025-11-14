@@ -6,6 +6,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.ColorSpace
 import android.graphics.RectF
 import android.hardware.camera2.CameraCaptureSession
@@ -96,6 +97,21 @@ import java.io.OutputStreamWriter
 import kotlin.math.abs
 import kotlin.math.exp
 import android.graphics.Color
+import android.graphics.Paint
+import android.util.Range
+import android.util.Rational
+import android.util.TypedValue
+import android.view.Gravity
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.InsetDrawable
+import android.media.ImageReader
+import android.graphics.ImageFormat
+import android.media.Image
+import java.nio.ByteBuffer
 
 
 class CustomPreviewFragment : Fragment() {
@@ -124,6 +140,30 @@ class CustomPreviewFragment : Fragment() {
         return String.format("%.2fx", shown)
     }
 
+
+    //밝기 초점 조정용 프리뷰 사이즈
+    private var currentPreviewSize: Size? = null
+
+    //
+    // Focus & EV overlay
+    private lateinit var focusRing: FocusRingView
+    private lateinit var evBarContainer: LinearLayout
+    private lateinit var evSeek: SeekBar
+    private var evDragging = false
+    private var evStartX = 0f
+    private var evStartComp = 0
+    private val EV_PIXELS_PER_STEP = 20f  // 감도 2배 증가 (값이 작을수록 감도 높음)
+    private val LONG_PRESS_MS = 100L
+    private var longPressFired = false
+    private var longPressRunnable: Runnable? = null
+    private var evLocked = false  // 수동 EV 조절 후 자동 변경 방지
+
+    // AE 보정 범위/스텝 상태
+    private var aeCompRange: Range<Int>? = null
+    private var aeCompStep: Rational? = null
+    private var currentAeComp: Int = 0
+
+    private fun dp(v: Int) = (resources.displayMetrics.density * v + 0.5f).toInt()
     // 줌 핀처
     private lateinit var scaleDetector: ScaleGestureDetector
     private var isScaling = false
@@ -172,6 +212,12 @@ class CustomPreviewFragment : Fragment() {
     private val characteristics: CameraCharacteristics by lazy {
         cameraManager.getCameraCharacteristics(args.cameraId)
     }
+
+    // 갤러리 버튼 원래 상태 저장
+    private var galleryButtonOriginalDrawable: android.graphics.drawable.Drawable? = null
+    private var galleryButtonOriginalClickListener: View.OnClickListener? = null
+    private var imageReader: android.media.ImageReader? = null
+    private var stillReader: ImageReader? = null
 
     /** File where the recording will be saved */
 
@@ -493,6 +539,72 @@ class CustomPreviewFragment : Fragment() {
             }
         }
     }
+    // EV 노출값 조절 (수치 표시는 제거)
+    private fun updateEvText() { }
+
+    private var hideEvRunnable: Runnable? = null
+    private fun scheduleHideEvBar(delayMs: Long = 1400L) {
+        hideEvRunnable?.let { evBarContainer.removeCallbacks(it) }
+        hideEvRunnable = Runnable {
+            evBarContainer.animate().alpha(0f).setDuration(140)
+                .withEndAction { evBarContainer.visibility = View.GONE }.start()
+        }
+        evBarContainer.postDelayed(hideEvRunnable!!, delayMs)
+    }
+
+    private fun showEvBarAt(x: Float, y: Float) {
+        val parentW = fragmentBinding.overlayContainer.width
+        val parentH = fragmentBinding.overlayContainer.height
+        evBarContainer.measure(
+            View.MeasureSpec.makeMeasureSpec(parentW, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(parentH, View.MeasureSpec.AT_MOST)
+        )
+        val bw = evBarContainer.measuredWidth
+
+
+
+        val bh = evBarContainer.measuredHeight
+        val left = (x - bw/2f).coerceIn(0f, (parentW - bw).toFloat())
+        val top  = (y + dp(20)).coerceIn(0f, (parentH - bh).toFloat())
+
+        (evBarContainer.layoutParams as FrameLayout.LayoutParams).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = left.toInt(); topMargin = top.toInt()
+        }
+        evBarContainer.requestLayout()
+        evBarContainer.visibility = View.VISIBLE
+        evBarContainer.animate().alpha(1f).setDuration(120).start()
+        scheduleHideEvBar()
+    }
+
+    private fun applyExposureComp(evSteps: Int) {
+        val range = aeCompRange ?: return
+        val clamped = evSteps.coerceIn(range.lower, range.upper)
+        currentAeComp = clamped
+
+        val builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            pipeline.getPreviewTargets().forEach { addTarget(it) }
+            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, clamped)
+            // (필요 시 AF/AWB 모드도 유지)
+        }
+        session.setRepeatingRequest(builder.build(), null, cameraHandler)
+
+        // 시크바 동기화
+        aeCompRange?.let { evSeek.progress = clamped - it.lower }
+    }
+
+    private fun setEvByTapAbsolute(xInView: Float) {
+        val range = aeCompRange ?: return
+        val w = fragmentBinding.viewFinder.width.coerceAtLeast(1)
+        val t = (xInView / w.toFloat()) // 0.0~1.0
+        val steps = (range.lower + t * (range.upper - range.lower)).toInt()
+        applyExposureComp(steps)
+        updateEvText()
+        // 시크바/EV바 HUD 위치도 갱신
+        evSeek.progress = steps - range.lower
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -607,23 +719,105 @@ class CustomPreviewFragment : Fragment() {
         )
 
 
-        fragmentBinding.viewFinder.setOnTouchListener { _, event ->
-            // 먼저 핀치 제스처에 전달
+        fragmentBinding.viewFinder.setOnTouchListener { v, event ->
+            // 핀치(줌) 먼저 처리
             scaleDetector.onTouchEvent(event)
 
+            fun toOverlayXY(ev: MotionEvent): Pair<Float, Float> {
+                val loc = IntArray(2)
+                fragmentBinding.overlayContainer.getLocationOnScreen(loc)
+                return (ev.rawX - loc[0]) to (ev.rawY - loc[1])
+            }
+
             when (event.actionMasked) {
-                MotionEvent.ACTION_UP -> {
-                    // 스케일 중이 아니고, 손가락이 1개일 때만 포커스
+                MotionEvent.ACTION_DOWN -> {
                     if (!isScaling && event.pointerCount == 1) {
+                        // 이전에 수동 EV 조절을 했다면, 다음 터치에서 즉시 자동으로 EV와 초점 설정
+                        if (evLocked) {
+                            evLocked = false
+                            val (ox, oy) = toOverlayXY(event)
+                            focusRing.showAt(ox, oy)
+                            showEvBarAt(ox, oy)
+                            
+                            // 터치 위치에 맞게 EV 자동 설정
+                            setEvByTapAbsolute(event.x)
+                            
+                            // 초점 설정
+                            val x = event.x / fragmentBinding.viewFinder.width
+                            val y = event.y / fragmentBinding.viewFinder.height
+                            triggerFocusAtPoint(x, y)
+                            
+                            scheduleHideEvBar(2000)
+                            return@setOnTouchListener true
+                        }
+                        
+                        // 롱 프레스 초기화
+                        longPressFired = false
+                        longPressRunnable?.let { v.removeCallbacks(it) }
+                        
+                        longPressRunnable = Runnable {
+                            longPressFired = true
+                            val (ox, oy) = toOverlayXY(event)
+                            focusRing.showAt(ox, oy)
+                            showEvBarAt(ox, oy)
+
+                            // ✅ 롱 프레스 시, 화면 가로 위치를 EV 보정 범위에 "절대 맵핑"해서 즉시 적용
+                            setEvByTapAbsolute(event.x)
+
+                            // 이후 드래그를 위한 초기화(이전 드래그와 무관하게 새 기준으로 시작)
+                            evDragging = true
+                            evStartX = event.x
+                            evStartComp = currentAeComp
+
+                            scheduleHideEvBar(2000)
+                        }.also { v.postDelayed(it, LONG_PRESS_MS) }
+                    }
+                }
+
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    // 멀티터치 감지 시 롱 프레스 취소
+                    longPressRunnable?.let { v.removeCallbacks(it) }
+                    longPressRunnable = null
+                    longPressFired = false
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    // 멀티터치 감지 시 롱 프레스 취소
+                    if (event.pointerCount > 1) {
+                        longPressRunnable?.let { v.removeCallbacks(it) }
+                        longPressRunnable = null
+                        longPressFired = false
+                    }
+                    
+                    if (!isScaling && evDragging && longPressFired) {
+                        // 기존과 동일: 가로 드래그로 상대 변경(미세 조절)
+                        val deltaPx = event.x - evStartX
+                        val steps = (deltaPx / EV_PIXELS_PER_STEP).toInt()
+                        applyExposureComp(evStartComp + steps)
+                        updateEvText()
+                        scheduleHideEvBar(2000)
+                        // 수동 EV 조절 플래그 설정
+                        evLocked = true
+                    }
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    // 롱 프레스 취소
+                    longPressRunnable?.let { v.removeCallbacks(it) }
+                    longPressRunnable = null
+                    
+                    evDragging = false
+                    scheduleHideEvBar()
+
+                    if (!isScaling && event.pointerCount == 1 && longPressFired) {
                         val x = event.x / fragmentBinding.viewFinder.width
                         val y = event.y / fragmentBinding.viewFinder.height
                         triggerFocusAtPoint(x, y)
 
-                        // ✅ 녹화 중이 아니고, 오토줌이 꺼져 있을 때만 렌즈 HUD 노출
-                        if (!isCurrentlyRecording() && !autoZoom.isActive) {
-                            showLensHUD()
-                        }
+                        if (!isCurrentlyRecording() && !autoZoom.isActive) showLensHUD()
                     }
+                    
+                    longPressFired = false
                 }
             }
             true
@@ -666,7 +860,20 @@ class CustomPreviewFragment : Fragment() {
                 // 뷰 비율/버퍼 고정 (버퍼를 먼저 고정해 두면 크롭 이슈가 줄어듦)
                 holder.setFixedSize(previewSize.width, previewSize.height)
                 fragmentBinding.viewFinder.setAspectRatio(previewSize.width, previewSize.height)
+
+                currentPreviewSize = previewSize
+
                 pipeline.setPreviewSize(previewSize)
+
+                // 📸 정지화상용 ImageReader 미리 생성 (세션 outputs에 포함시키기 위함)
+                if (stillReader == null) {
+                    stillReader = ImageReader.newInstance(
+                        previewSize.width,
+                        previewSize.height,
+                        ImageFormat.JPEG,
+                        2
+                    )
+                }
 
                 fragmentBinding.viewFinder.post {
                     pipeline.createResources(holder.surface)
@@ -713,7 +920,88 @@ class CustomPreviewFragment : Fragment() {
             }
         }
 
-        fragmentBinding.galleryButton.setOnClickListener {
+        //오버레이 UI 생성 코드--------------------------
+        // 0) 카메라가 지원하는 EV 범위/스텝 읽기
+        aeCompRange = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+        aeCompStep  = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
+
+        // 1) 포커스 링
+        focusRing = FocusRingView(requireContext()).apply {
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        fragmentBinding.overlayContainer.addView(focusRing)
+
+        // 2) EV 바 (텍스트 + 시크바)
+        evBarContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, 0)
+            background = null
+            gravity = Gravity.CENTER_VERTICAL
+            alpha = 0f; visibility = View.GONE
+        }
+        evSeek = SeekBar(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(73), dp(14)).apply { leftMargin = dp(10) }
+            max = aeCompRange?.let { it.upper - it.lower } ?: 0
+            progress = 0
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                    val r = aeCompRange ?: return
+                    val target = r.lower + p
+                    if (target != currentAeComp) { applyExposureComp(target) }
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) { scheduleHideEvBar() }
+            })
+            // 스타일: 얇은 흰 트랙 + 짧은 흰 썸
+            val trackHeight = dp(2)
+            val thumbWidth = dp(2)
+            val thumbHeight = dp(14)
+            val bg = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(Color.WHITE)
+                alpha = 160
+                cornerRadius = dp(1).toFloat()
+            }
+            val prog = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(Color.WHITE)
+                cornerRadius = dp(1).toFloat()
+            }
+            val layer = LayerDrawable(arrayOf(InsetDrawable(bg, 0), InsetDrawable(prog, 0))).apply {
+                setId(0, android.R.id.background)
+                setId(1, android.R.id.progress)
+            }
+            splitTrack = false
+            progressDrawable = layer
+            setPadding(0, dp(6), 0, dp(6))
+            val thumbDrawable = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(Color.WHITE)
+                setSize(thumbWidth, thumbHeight)
+            }
+            thumb = thumbDrawable
+            minHeight = trackHeight + dp(12)
+        }
+        evBarContainer.addView(evSeek)
+
+        // 컨테이너에 붙이기
+        fragmentBinding.overlayContainer.addView(
+            evBarContainer,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+        // 숫자 수치 제거
+        //오버레이 UI 생성 코드 끝--------------------------
+
+        // 갤러리 버튼 원래 상태 저장
+        galleryButtonOriginalDrawable = fragmentBinding.galleryButton.drawable
+        galleryButtonOriginalClickListener = View.OnClickListener {
             Toast.makeText(requireContext(), "갤러리로 이동", Toast.LENGTH_SHORT).show()
 
             val action = CustomPreviewFragmentDirections
@@ -737,6 +1025,7 @@ class CustomPreviewFragment : Fragment() {
 
             findNavController().navigate(action)
         }
+        fragmentBinding.galleryButton.setOnClickListener(galleryButtonOriginalClickListener)
         //오토줌과 전면 렌즈 변경 버튼 표시
         updateTopRightButton()
         //진입시 렌즈 선택 버튼 표시
@@ -769,56 +1058,146 @@ class CustomPreviewFragment : Fragment() {
         }
     }
 
-    @SuppressLint("MissingPermission")
-    private fun triggerFocusAtPoint(x: Float, y: Float) {
-        // if (isCurrentlyRecording()) {
-        //    Log.d(TAG, "🎥 녹화 중이므로 포커싱/노출 요청 무시됨")
-        //    return
-        //}
-
-        val sensorArraySize = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
-
-        // 1. 터치 위치 → 센서 좌표 변환
-        val focusX = (x * sensorArraySize.width()).toInt()
-        val focusY = (y * sensorArraySize.height()).toInt()
-
-        // 2. MeteringRectangle 설정 (AF/AE 공용)
-        val meteringArea = MeteringRectangle(
-            maxOf(focusX - 100, 0),
-            maxOf(focusY - 100, 0),
-            200,
-            200,
-            MeteringRectangle.METERING_WEIGHT_MAX
-        )
-
-        // 3. CaptureRequest.Builder 생성
-        val requestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-            addTarget(pipeline.getPreviewTargets().first())
-
-            // ✅ 자동 초점 + 영역
-            set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
-            set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(meteringArea))
-            set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START)
-
-            // ✅ 자동 노출 + 영역
-            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-            set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(meteringArea))
+    // 물리 카메라 강제 라우팅 시 사용: per-physical 키로 줌/크롭 적용
+    private fun applyZoomRatio(builder: CaptureRequest.Builder, ratio: Float, forcePhysicalId: String?) {
+        val z = ratio.coerceIn(1f, 10f)
+        if (forcePhysicalId.isNullOrEmpty()) {
+            applyZoomRatio(builder, z)
+            return
         }
 
-        // 4. 단발 AF/AE 요청 후, 프리뷰 복원
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // API 30+: per-physical zoom ratio
+            builder.setPhysicalCameraKey(CaptureRequest.CONTROL_ZOOM_RATIO, z, forcePhysicalId)
+        } else {
+            // 하위: per-physical SCALER_CROP_REGION
+            val physChars = cameraManager.getCameraCharacteristics(forcePhysicalId)
+            val active = physChars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+            val cx = active.centerX()
+            val cy = active.centerY()
+            val w = (active.width() / z).toInt()
+            val h = (active.height() / z).toInt()
+            val left = (cx - w / 2).coerceAtLeast(0)
+            val top = (cy - h / 2).coerceAtLeast(0)
+            val right = (left + w).coerceAtMost(active.right)
+            val bottom = (top + h).coerceAtMost(active.bottom)
+            val rect = android.graphics.Rect(left, top, right, bottom)
+            builder.setPhysicalCameraKey(CaptureRequest.SCALER_CROP_REGION, rect, forcePhysicalId)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun triggerFocusAtPoint(xNormView: Float, yNormView: Float) {
+        val sensorActive = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+
+        val previewSize = currentPreviewSize
+        if (previewSize == null) {
+            Log.w(TAG, "previewSize not ready; fallback to view size mapping only")
+            return
+        }
+
+        val content = computeContentRect(
+            viewW = fragmentBinding.viewFinder.width,
+            viewH = fragmentBinding.viewFinder.height,
+            bufW = previewSize.width,
+            bufH = previewSize.height
+        )
+
+        val xInContent = (xNormView * fragmentBinding.viewFinder.width  - content.left) / content.width()
+        val yInContent = (yNormView * fragmentBinding.viewFinder.height - content.top ) / content.height()
+        val xClamped = xInContent.coerceIn(0f, 1f)
+        val yClamped = yInContent.coerceIn(0f, 1f)
+
+        val visibleOnSensor: android.graphics.Rect =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                computeCropByZoomRatio(sensorActive, zoomLevel)
+            } else {
+                computeCenterCropByUiZoom(sensorActive, zoomLevel)
+            }
+
+        var sx = (visibleOnSensor.left + xClamped * visibleOnSensor.width()).toInt()
+        var sy = (visibleOnSensor.top  + yClamped * visibleOnSensor.height()).toInt()
+
+        val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
+            ?: CameraCharacteristics.LENS_FACING_BACK
+        if (lensFacing == CameraCharacteristics.LENS_FACING_FRONT) {
+            sx = visibleOnSensor.left + visibleOnSensor.right - sx
+        }
+
+        val boxSize = (minOf(visibleOnSensor.width(), visibleOnSensor.height()) * 0.12f)
+            .toInt().coerceAtLeast(80)
+        val left = (sx - boxSize/2).coerceIn(visibleOnSensor.left, visibleOnSensor.right - boxSize)
+        val top  = (sy - boxSize/2).coerceIn(visibleOnSensor.top,  visibleOnSensor.bottom - boxSize)
+        val rect = android.graphics.Rect(left, top, left + boxSize, top + boxSize)
+        val metering = MeteringRectangle(rect, MeteringRectangle.METERING_WEIGHT_MAX)
+
+        val builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            addTarget(pipeline.getPreviewTargets().first())
+            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+            set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+            set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(metering))
+            set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START)
+            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(metering))
+            // 필요 시 AWB도 동일하게
+            // set(CaptureRequest.CONTROL_AWB_REGIONS, arrayOf(metering))
+            // 물리카메라 강제 사용 중이면 per-physical key도 고려(주석 참조)
+        }
+
         session.stopRepeating()
-        session.capture(requestBuilder.build(), object : CameraCaptureSession.CaptureCallback() {
+        session.capture(builder.build(), object : CameraCaptureSession.CaptureCallback() {
             override fun onCaptureCompleted(
                 session: CameraCaptureSession,
                 request: CaptureRequest,
                 result: TotalCaptureResult
             ) {
                 cameraHandler.postDelayed({
-                    val preview = previewRequest ?: requestBuilder.build()
+                    val preview = previewRequest ?: request
                     session.setRepeatingRequest(preview, null, cameraHandler)
                 }, 50)
             }
         }, cameraHandler)
+    }
+
+    /** 뷰 안에서 프리뷰 버퍼가 차지하는 '콘텐츠 사각형'(레터/필러 박스 보정용)을 구한다 */
+    private fun computeContentRect(viewW: Int, viewH: Int, bufW: Int, bufH: Int): android.graphics.RectF {
+        val viewAR = viewW / viewH.toFloat()
+        val bufAR  = bufW  / bufH.toFloat()
+        return if (bufAR > viewAR) {
+            // 좌우가 맞고 위아래가 여백
+            val contentW = viewW.toFloat()
+            val contentH = contentW / bufAR
+            val top = (viewH - contentH) / 2f
+            android.graphics.RectF(0f, top, contentW, top + contentH)
+        } else {
+            // 위아래가 맞고 좌우가 여백
+            val contentH = viewH.toFloat()
+            val contentW = contentH * bufAR
+            val left = (viewW - contentW) / 2f
+            android.graphics.RectF(left, 0f, left + contentW, contentH)
+        }
+    }
+
+    /** GL 기반 내부 줌(zoomLevel)에 맞춰, 센서 active array에서 보이는 영역을 센터 크롭으로 계산 */
+    private fun computeCenterCropByUiZoom(active: android.graphics.Rect, zoom: Float): android.graphics.Rect {
+        val z = zoom.coerceIn(1f, 10f)
+        val newW = (active.width()  / z).toInt()
+        val newH = (active.height() / z).toInt()
+        val cx = active.centerX()
+        val cy = active.centerY()
+        return android.graphics.Rect(
+            (cx - newW/2).coerceAtLeast(active.left),
+            (cy - newH/2).coerceAtLeast(active.top),
+            (cx + newW/2).coerceAtMost(active.right),
+            (cy + newH/2).coerceAtMost(active.bottom)
+        )
+    }
+
+    /** (선택) CONTROL_ZOOM_RATIO를 실제로 쓰는 경우의 가시 영역 근사 */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
+    private fun computeCropByZoomRatio(active: android.graphics.Rect, zoom: Float): android.graphics.Rect {
+        // ZOOM_RATIO = 1/scale 과 동치 → 센터 크롭
+        return computeCenterCropByUiZoom(active, zoom)
     }
 
 
@@ -872,10 +1251,14 @@ class CustomPreviewFragment : Fragment() {
         camera = openCamera(cameraManager, args.cameraId, cameraHandler)
 
         val previewTargets = pipeline.getPreviewTargets()
+        val sessionTargets = buildList {
+            addAll(previewTargets)
+            stillReader?.surface?.let { add(it) }
+        }
         val forcePhysicalId = args.forcePhysicalId
         session = createCaptureSession(
             device = camera,
-            targets = previewTargets,
+            targets = sessionTargets,
             handler = cameraHandler,
             recordingCompleteOnClose = (pipeline !is SoftwarePipeline),
             forcePhysicalCameraId = forcePhysicalId
@@ -941,6 +1324,13 @@ class CustomPreviewFragment : Fragment() {
 
             // 🔥 상단 우측 버튼을 '오토줌 토글' 모드로 전환
             updateTopRightButton()
+            
+            // 📸 갤러리 버튼을 사진 촬영 버튼으로 변경
+            galleryButtonOriginalDrawable = fragmentBinding.galleryButton.drawable
+            fragmentBinding.galleryButton.setImageResource(R.drawable.ic_shutter_normal)
+            fragmentBinding.galleryButton.setOnClickListener {
+                captureStillPicture()
+            }
         }
 
         // MediaStore에 JSONL 파일 등록
@@ -1051,6 +1441,16 @@ class CustomPreviewFragment : Fragment() {
             recordingStarted = false
             // 🔥 상단 우측 버튼을 '전면 전환' 모드로 복귀
             updateTopRightButton()
+            
+            // 📸 갤러리 버튼을 원래대로 복원
+            galleryButtonOriginalDrawable?.let {
+                fragmentBinding.galleryButton.setImageDrawable(it)
+            } ?: run {
+                updateGalleryThumbnail()  // 원래 drawable이 없으면 썸네일 다시 설정
+            }
+            galleryButtonOriginalClickListener?.let {
+                fragmentBinding.galleryButton.setOnClickListener(it)
+            }
         }
 
         // 11. UI 화면 복귀는 무조건 메인스레드에서 안전하게 실행
@@ -1098,8 +1498,12 @@ class CustomPreviewFragment : Fragment() {
                 args.videoCodec,
                 false,                            // 전면은 기본 카메라 역할 → 필터/트래킹 off 권장
                 args.transfer,
-                true                           // 전면은 하드웨어 파이프라인 고정 사용할 거라면 true
-            )
+                true,                           // 전면은 하드웨어 파이프라인 고정 사용할 거라면 true
+                "hardware"                      // pipelineMode 추가
+            ).apply {
+                // forcePhysicalId는 nullable이므로 setter로 설정
+                setForcePhysicalId(null)
+            }
 
         findNavController().navigate(action)
     }
@@ -1526,6 +1930,83 @@ class CustomPreviewFragment : Fragment() {
         } ?: return
 
         fragmentBinding.galleryButton.setImageBitmap(thumb)
+    }
+
+    // 📸 녹화 중 사진 촬영 함수 (미리보기와 동일한 프레임을 저장: PixelCopy)
+    private fun captureStillPicture() {
+        try {
+            val sv = fragmentBinding.viewFinder
+            val bmp = Bitmap.createBitmap(sv.width, sv.height, Bitmap.Config.ARGB_8888)
+            PixelCopy.request(sv, bmp, { result ->
+                if (result != PixelCopy.SUCCESS) {
+                    Toast.makeText(requireContext(), "캡처 실패($result)", Toast.LENGTH_SHORT).show()
+                    return@request
+                }
+
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.KOREA)
+                            .format(System.currentTimeMillis())
+                        val contentValues = ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                            put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/EchoShot")
+                        }
+
+                        val uri = requireContext().contentResolver.insert(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                            contentValues
+                        )
+
+                        uri?.let {
+                            requireContext().contentResolver.openOutputStream(it)?.use { os ->
+                                val ok = bmp.compress(Bitmap.CompressFormat.JPEG, 95, os)
+                                if (!ok) throw RuntimeException("JPEG 압축 실패")
+                            }
+                            MediaScannerConnection.scanFile(
+                                requireContext(),
+                                arrayOf(it.toString()),
+                                arrayOf("image/jpeg"),
+                                null
+                            )
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "사진 저장 완료!", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "사진 저장 실패", e)
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "저장 실패: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }, Handler(Looper.getMainLooper()))
+        } catch (e: Exception) {
+            Log.e(TAG, "사진 촬영 오류", e)
+            Toast.makeText(requireContext(), "사진 촬영 실패: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    class FocusRingView(context: Context) : View(context) {
+        var cx = 0f; var cy = 0f; var radius = 70f
+        private val p1 = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 4f; color = Color.WHITE
+        }
+        private val p2 = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 8f; color = Color.BLACK; alpha = 80
+        }
+        fun showAt(x: Float, y: Float) {
+            cx = x; cy = y; alpha = 1f; scaleX = 1.2f; scaleY = 1.2f
+            visibility = View.VISIBLE
+            animate().scaleX(1f).scaleY(1f).setDuration(150).start()
+            removeCallbacks(hideRun); postDelayed(hideRun, 1200)
+            invalidate()
+        }
+        private val hideRun = Runnable {
+            animate().alpha(0f).setDuration(160).withEndAction { visibility = GONE }.start()
+        }
+        override fun onDraw(c: Canvas) { c.drawCircle(cx, cy, radius, p2); c.drawCircle(cx, cy, radius, p1) }
     }
 
     fun reloadWithNewPipeline(
