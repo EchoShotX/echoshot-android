@@ -16,10 +16,8 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.MotionEvent
-import android.view.ScaleGestureDetector
 import android.widget.ImageButton
 import android.widget.SeekBar
-import android.widget.TextView
 import android.widget.Toast
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -40,16 +38,11 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.echoshot.app.ui.CenterSnapHelper
-import com.echoshot.app.ui.ZoomRulerAdapter
 import androidx.navigation.fragment.navArgs
-import com.echoshot.app.ui.EdgeCenterSpacingDecoration
 import java.io.File
 import java.io.IOException
 
-class PhotoFragment : Fragment() {
+class PhotoFrontFragment : Fragment() {
     // 터치 링 뷰
     private class FocusRingView(context: android.content.Context) : View(context) {
         var cx = 0f; var cy = 0f; var radius = 70f
@@ -76,21 +69,9 @@ class PhotoFragment : Fragment() {
     private lateinit var imageCapture: ImageCapture
     private var cameraProvider: ProcessCameraProvider? = null
     private var camera: Camera? = null
-    private var cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-    private var zoomAdapter: ZoomRulerAdapter? = null
-    private var zoomRuler: RecyclerView? = null
+    private var cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA  // 전면 카메라 전용
 
     private lateinit var cameraExecutor: ExecutorService
-
-    private var initDone = false   // 초기 배율/룰러 세팅 끝나기 전까지 스크롤 무시
-    private var appliedInitialZoom = false
-    // Pinch-to-zoom
-    private lateinit var scaleDetector: ScaleGestureDetector
-    private var isScaling = false
-    private var pinchStartZoom = 1.0f
-    private var accumulatedScale = 1.0f
-    private val PINCH_POWER = 1.0f
 
     // EV overlay
     private lateinit var overlayContainer: FrameLayout
@@ -112,7 +93,7 @@ class PhotoFragment : Fragment() {
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        return inflater.inflate(R.layout.fragment_photo_preview, container, false)
+        return inflater.inflate(R.layout.fragment_front_photo_preview, container, false)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -202,50 +183,11 @@ class PhotoFragment : Fragment() {
             )
         }
 
-        // Pinch zoom detector
-        scaleDetector = ScaleGestureDetector(requireContext(), object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-                isScaling = true
-                pinchStartZoom = camera?.cameraInfo?.zoomState?.value?.zoomRatio ?: 1.0f
-                accumulatedScale = 1.0f
-                return true
-            }
-
-            override fun onScale(detector: ScaleGestureDetector): Boolean {
-                val step = Math.pow(detector.scaleFactor.toDouble(), PINCH_POWER.toDouble()).toFloat()
-                accumulatedScale *= step
-                val state = camera?.cameraInfo?.zoomState?.value
-                val minZ = state?.minZoomRatio ?: 1.0f
-                val maxZ = state?.maxZoomRatio ?: 10.0f
-                val newZoom = (pinchStartZoom * accumulatedScale).coerceIn(minZ, maxZ)
-                camera?.cameraControl?.setZoomRatio(newZoom)
-
-                // 줌 HUD 업데이트
-                view?.findViewById<TextView>(R.id.zoom_level_text)?.text = String.format(java.util.Locale.KOREA, "%.1fx", newZoom)
-
-                // 하단 줌 룰러도 동기화 (초기화 후에만)
-                if (initDone) {
-                    val adapter = zoomAdapter
-                    val rv = zoomRuler
-                    if (adapter != null && rv != null) {
-                        val pos = adapter.zoomToPosition(newZoom)
-                        rv.scrollToPosition(pos)
-                    }
-                }
-                return true
-            }
-
-            override fun onScaleEnd(detector: ScaleGestureDetector) {
-                isScaling = false
-            }
-        })
-
-        // Touch to show EV bar on long-press + 터치 링 표시
+        // Touch to show EV bar on long-press + 터치 링 표시 (전면 카메라는 줌 없음)
         viewFinder.setOnTouchListener { v, ev ->
-            scaleDetector.onTouchEvent(ev)
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    if (!isScaling && ev.pointerCount == 1) {
+                    if (ev.pointerCount == 1) {
                         // 이전에 수동 EV 조절을 했다면, 다음 터치에서 즉시 자동으로 EV 설정
                         if (evLocked) {
                             evLocked = false
@@ -255,7 +197,7 @@ class PhotoFragment : Fragment() {
                             val oy = ev.rawY - loc[1]
                             focusRing.showAt(ox, oy)
                             showEvBarAt(ev.x, ev.y)
-                            
+
                             // 터치 위치에 맞게 EV 자동 설정
                             val es = camera?.cameraInfo?.exposureState ?: return@setOnTouchListener true
                             val range = es.exposureCompensationRange
@@ -266,7 +208,7 @@ class PhotoFragment : Fragment() {
                             scheduleHideEvBar(2000)
                             return@setOnTouchListener true
                         }
-                        
+
                         longPressFired = false
                         longPressRunnable?.let { v.removeCallbacks(it) }
                         longPressRunnable = Runnable {
@@ -277,13 +219,13 @@ class PhotoFragment : Fragment() {
                             val oy = ev.rawY - loc[1]
                             focusRing.showAt(ox, oy)
                             showEvBarAt(ev.x, ev.y)
-                            
+
                             // EV 드래그 초기화
                             val es = camera?.cameraInfo?.exposureState ?: return@Runnable
                             evStartComp = es.exposureCompensationIndex
                             evStartX = ev.x
                             evDragging = true
-                            
+
                             // 탭 위치 기준으로 EV 즉시 설정
                             val range = es.exposureCompensationRange
                             val t = (ev.x / viewFinder.width.toFloat()).coerceIn(0f, 1f)
@@ -307,8 +249,8 @@ class PhotoFragment : Fragment() {
                         longPressFired = false
                         evDragging = false
                     }
-                    
-                    if (!isScaling && evDragging && longPressFired) {
+
+                    if (evDragging && longPressFired) {
                         val es = camera?.cameraInfo?.exposureState ?: return@setOnTouchListener true
                         val deltaPx = ev.x - evStartX
                         val steps = (deltaPx / EV_PIXELS_PER_STEP).toInt()
@@ -333,13 +275,12 @@ class PhotoFragment : Fragment() {
 
         // 버튼
         val captureButton: View = view.findViewById(R.id.capture_button)
-        val switchCameraButton: View = view.findViewById(R.id.switch_camera_button)
-
         captureButton.setOnClickListener { takePhoto() }
-        switchCameraButton.setOnClickListener {
-            // 전면 카메라 프래그먼트로 이동
+        
+        // 카메라 전환 버튼: 후면 카메라 프래그먼트로 이동
+        view.findViewById<View>(R.id.switch_camera_button)?.setOnClickListener {
             val a = navArgs
-            val action = PhotoFragmentDirections.actionPhotoFragmentToPhotoFrontFragment(
+            val action = PhotoFrontFragmentDirections.actionPhotoFrontFragmentToPhotoFragment(
                 a.cameraId,
                 a.width,
                 a.height,
@@ -360,83 +301,15 @@ class PhotoFragment : Fragment() {
             findNavController().navigate(action)
         }
 
-        // ───── 줌 룰러 UI (어댑터는 "처음엔" 붙이지 않음)
-        zoomRuler = view.findViewById(R.id.zoom_ruler)
-        val zoomHud = view.findViewById<TextView?>(R.id.zoom_level_text)
-
-        val lm = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
-        zoomRuler!!.layoutManager = lm
-
-        val snapHelper = CenterSnapHelper()
-        snapHelper.attachToRecyclerView(zoomRuler)
-
-        val itemWidthDp = 12
-        zoomRuler!!.addItemDecoration(EdgeCenterSpacingDecoration(itemWidthDp))
-
-        // 실시간 업데이트용 간단 throttle
-        var lastUpdateMs = 0L
-        fun maybeUpdateZoom(z: Float) {
-            val now = System.currentTimeMillis()
-            if (now - lastUpdateMs >= 16) {
-                camera?.cameraControl?.setZoomRatio(z)
-                zoomHud?.text = String.format(Locale.KOREA, "%.1fx", z)
-                lastUpdateMs = now
-            }
-        }
-
         view.findViewById<ImageButton>(R.id.gallery_button)?.setOnClickListener {
             openGallery()
         }
 
-        zoomRuler!!.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
-                super.onScrolled(rv, dx, dy)
-                if (!initDone) return
-                val adapter = zoomAdapter ?: return
-                val layout = rv.layoutManager as? LinearLayoutManager ?: return
-
-                val centerX = rv.width / 2
-                var closestChild: View? = null
-                var minDist = Int.MAX_VALUE
-                for (i in 0 until layout.childCount) {
-                    val child = layout.getChildAt(i) ?: continue
-                    val childCenter = (child.left + child.right) / 2
-                    val dist = kotlin.math.abs(childCenter - centerX)
-                    if (dist < minDist) { minDist = dist; closestChild = child }
-                }
-                val child = closestChild ?: return
-                val pos = rv.getChildAdapterPosition(child)
-                if (pos == RecyclerView.NO_POSITION) return
-
-                val childCenter = (child.left + child.right) / 2f
-                val itemWidth = child.width.toFloat().coerceAtLeast(1f)
-                val offsetInItem = (centerX - childCenter) / itemWidth
-                val posF = pos - offsetInItem
-
-                val z = adapter.positionToZoom(posF)
-                maybeUpdateZoom(z)
-            }
-
-            override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
-                super.onScrollStateChanged(rv, newState)
-                if (!initDone) return
-                val adapter = zoomAdapter ?: return
-                val layout = rv.layoutManager as? LinearLayoutManager ?: return
-                val snapView = snapHelper.findSnapView(layout) ?: return
-                val pos = rv.getChildAdapterPosition(snapView)
-                if (pos != RecyclerView.NO_POSITION) {
-                    val z = adapter.positionToZoom(pos)
-                    camera?.cameraControl?.setZoomRatio(z)
-                    zoomHud?.text = String.format(Locale.KOREA, "%.1fx", z)
-                }
-            }
-        })
-
-        // 사진 → 동영상 버튼
+        // 사진 → 동영상 버튼 (전면 동영상으로 이동)
         view.findViewById<View>(R.id.btn_mode_video)?.setOnClickListener {
             val a = navArgs
-            val back = PhotoFragmentDirections
-                .actionPhotoFragmentToCustomPreviewFragment(
+            val action = PhotoFrontFragmentDirections
+                .actionPhotoFrontFragmentToCustomFrontPreviewFragment(
                     a.cameraId,
                     a.width,
                     a.height,
@@ -450,8 +323,10 @@ class PhotoFragment : Fragment() {
                     a.transfer,
                     a.useHardware,
                     a.pipelineMode
-                )
-            findNavController().navigate(back)
+                ).apply {
+                    a.forcePhysicalId?.let { setForcePhysicalId(it) }
+                }
+            findNavController().navigate(action)
         }
 
         // 권한 체크 후 카메라 시작
@@ -504,50 +379,9 @@ class PhotoFragment : Fragment() {
                 provider.unbindAll()
                 camera = provider.bindToLifecycle(this, cameraSelector, useCaseGroup)
 
-                val zoomHud = view?.findViewById<TextView>(R.id.zoom_level_text)
-
-                // 바인딩 직후 즉시 1.0 강제 (기기 min이 0.6이어도 바로 덮어씀)
-                camera!!.cameraControl.setZoomRatio(1.0f)
-                zoomHud?.text = "1.0x"
-
-                // zoomState 첫 emit에서 실제 min/max 확인 후 어댑터 부착 및 최종 보정
-                appliedInitialZoom = false
-                initDone = false
-                camera!!.cameraInfo.zoomState.observe(viewLifecycleOwner) { state ->
-                    if (!appliedInitialZoom && state != null) {
-                        val minZ = state.minZoomRatio
-                        val maxZ = state.maxZoomRatio
-
-                        // 1.0을 기기 범위에 맞게 한 번 더 보정
-                        val target = 1.0f.coerceIn(minZ, maxZ)
-                        if (target != 1.0f) {
-                            camera!!.cameraControl.setZoomRatio(target)
-                        }
-                        zoomHud?.text = String.format(Locale.KOREA, "%.1fx", target)
-
-                        // 실제 범위로 어댑터 생성/부착 (초기엔 어댑터 없었음)
-                        val newAdapter = ZoomRulerAdapter(
-                            minZoom = minZ,   // 0.6 고정 하한 없음
-                            midZoom = 1.0f,
-                            maxZoom = maxZ,
-                            ticksPerLogUnit = 20,
-                            itemWidthDp = 12,
-                            minLeftTicks = 0,
-                            minRightTicks = 0
-                        )
-                        zoomAdapter = newAdapter
-                        zoomRuler?.adapter = newAdapter
-
-                        // 1.0 위치로 이동
-                        val pos = newAdapter.zoomToPosition(1.0f)
-                        zoomRuler?.post { zoomRuler?.scrollToPosition(pos) }
-
-                        appliedInitialZoom = true
-                        initDone = true
-                        // 동기화: EV 슬라이더 범위/현재 값
-                        syncEvSliderFromCamera()
-                    }
-                }
+                // 전면 카메라는 줌 미지원이므로 줌 로직 제거
+                // EV 슬라이더만 동기화
+                syncEvSliderFromCamera()
 
             } catch (e: Exception) {
                 Toast.makeText(requireContext(), "카메라 실행 실패: ${e.message}", Toast.LENGTH_SHORT).show()
