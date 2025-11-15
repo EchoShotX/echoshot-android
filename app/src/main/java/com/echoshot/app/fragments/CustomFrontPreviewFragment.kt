@@ -1,9 +1,11 @@
 package com.echoshot.app.fragments
 
 import android.annotation.SuppressLint
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -30,6 +32,7 @@ import android.util.Log
 import android.util.Size
 import android.view.LayoutInflater
 import android.view.MotionEvent
+import android.view.PixelCopy
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.View
@@ -62,6 +65,7 @@ import com.echoshot.app.databinding.FragmentPreviewBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import java.io.IOException
@@ -155,6 +159,10 @@ class CustomFrontPreviewFragment : Fragment() {
     @Volatile private var recordingComplete = false
     private val cvRecordingStarted = ConditionVariable(false)
     private val cvRecordingComplete = ConditionVariable(false)
+    
+    // 갤러리 버튼 원래 상태 저장
+    private var galleryButtonOriginalDrawable: android.graphics.drawable.Drawable? = null
+    private var galleryButtonOriginalClickListener: View.OnClickListener? = null
 
     // ===== Overlay & EV state =====
     private lateinit var overlayContainer: FrameLayout
@@ -403,7 +411,9 @@ class CustomFrontPreviewFragment : Fragment() {
             Toast.makeText(requireContext(), "이미 동영상 모드입니다", Toast.LENGTH_SHORT).show()
         }
 
-        fragmentBinding.galleryButton.setOnClickListener {
+        // 갤러리 버튼 원래 상태 저장
+        galleryButtonOriginalDrawable = fragmentBinding.galleryButton.drawable
+        galleryButtonOriginalClickListener = View.OnClickListener {
             Toast.makeText(requireContext(), "갤러리로 이동", Toast.LENGTH_SHORT).show()
 
             val action = CustomFrontPreviewFragmentDirections
@@ -432,6 +442,7 @@ class CustomFrontPreviewFragment : Fragment() {
 
             findNavController().navigate(action)
         }
+        fragmentBinding.galleryButton.setOnClickListener(galleryButtonOriginalClickListener)
     }
 
     private fun isCurrentlyRecording() = recordingStarted && !recordingComplete
@@ -465,6 +476,9 @@ class CustomFrontPreviewFragment : Fragment() {
     @SuppressLint("MissingPermission")
     private fun startFrontRecording() = lifecycleScope.launch(Dispatchers.IO) {
         if (recordingStarted) return@launch
+
+        // 🔁 새 녹화 시작이므로 상태 초기화
+        recordingComplete = false
 
         // 화면 회전 잠금
         requireActivity().requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
@@ -506,51 +520,93 @@ class CustomFrontPreviewFragment : Fragment() {
                 ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_pressed)
             fragmentBinding.captureTimer?.visibility = View.VISIBLE
             fragmentBinding.captureTimer?.start()
+            
+            // 📸 갤러리 버튼을 사진 촬영 버튼으로 변경
+            galleryButtonOriginalDrawable = fragmentBinding.galleryButton.drawable
+            fragmentBinding.galleryButton.setImageResource(R.drawable.ic_shutter_normal)
+            fragmentBinding.galleryButton.setOnClickListener {
+                captureStillPicture()
+            }
+            
+            // 🎥 녹화 중에는 화면 전환 버튼 숨기기 (placeholder로 교체)
+            fragmentBinding.switchCameraButton.visibility = View.GONE
+            requireView().findViewById<View>(R.id.switch_camera_placeholder)?.visibility = View.VISIBLE
         }
     }
 
     private fun stopFrontRecording() = lifecycleScope.launch(Dispatchers.IO) {
         if (!recordingStarted) return@launch
 
-        // 최소 한 프레임 보장
+        // 1) 최소 한 프레임 인코딩은 보장
         cvRecordingStarted.block()
         encoder.waitForFirstFrame()
 
-        // 세션 정지/종료
-        session.stopRepeating()
-        session.close()
-
-        // 파이프라인 리스너 정리
+        // 2) 녹화 완료 플래그 & 파이프라인 정리
+        recordingComplete = true
+        pipeline.stopRecording()
         pipeline.clearFrameListener()
+        cvRecordingComplete.open()   // 더 이상 onClosed에 의존하지 않음
 
-        // UI 업데이트
-        fragmentBinding.captureButton.post {
+        // 3) 캡처 중단 + 프리뷰 요청으로 전환 (세션은 닫지 않는다!)
+        withContext(Dispatchers.Main) {
+            try {
+                session.stopRepeating()
+            } catch (_: Throwable) { }
+
+            try {
+                // 기존 세션을 그대로 사용해서 프리뷰 요청만 다시 건다
+                val previewReq = pipeline.createPreviewRequest(session, args.previewStabilization)
+                    ?: camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                        val previewTargets = pipeline.getPreviewTargets()
+                        previewTargets.forEach { addTarget(it) }
+
+                        set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+                        set(
+                            CaptureRequest.CONTROL_AF_MODE,
+                            CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+                        )
+                        set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+                    }.build()
+
+                session.setRepeatingRequest(previewReq, null, cameraHandler)
+            } catch (e: Exception) {
+                Log.e(TAG, "전면 프리뷰 재시작 실패", e)
+            }
+
+            // 4) UI 복원 (버튼/타이머/갤러리/카메라 스위치)
             fragmentBinding.captureButton.background =
                 ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_normal)
             fragmentBinding.captureTimer?.visibility = View.GONE
             fragmentBinding.captureTimer?.stop()
+
+            galleryButtonOriginalDrawable?.let {
+                fragmentBinding.galleryButton.setImageDrawable(it)
+            } ?: run {
+                updateGalleryThumbnail()
+            }
+            galleryButtonOriginalClickListener?.let {
+                fragmentBinding.galleryButton.setOnClickListener(it)
+            }
+
+            fragmentBinding.switchCameraButton.visibility = View.VISIBLE
+            requireView().findViewById<View>(R.id.switch_camera_placeholder)?.visibility = View.GONE
         }
 
-        // 세션 종료 신호 대기
-        cvRecordingComplete.block()
+        // 5) 화면 회전 잠금 해제
+        requireActivity().requestedOrientation =
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
 
-        // 회전 잠금 해제
-        requireActivity().requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-
-        // 최소 녹화 시간 보장
+        // 6) 최소 녹화 시간 보장 + 애니메이션 딜레이
         val elapsed = System.currentTimeMillis() - recordingStartMillis
         if (elapsed < MIN_REQUIRED_RECORDING_TIME_MILLIS) {
             delay(MIN_REQUIRED_RECORDING_TIME_MILLIS - elapsed)
         }
         delay(CameraActivity.ANIMATION_SLOW_MILLIS)
 
-        // 파이프라인 정리
-        pipeline.cleanup()
-
-        // 인코더 종료
+        // 7) 인코더 종료
         val shutOk = encoder.shutdown()
 
-        // 미디어 스캔 + 뷰어 열기 (수명주기 가드)
+        // 8) MediaScanner 등록 + 썸네일만 갱신 (외부 플레이어는 열지 않음)
         if (shutOk) {
             val mime = MimeTypeMap.getSingleton()
                 .getMimeTypeFromExtension(outputFile.extension) ?: "video/mp4"
@@ -559,43 +615,59 @@ class CustomFrontPreviewFragment : Fragment() {
                 requireContext().applicationContext,
                 arrayOf(outputFile.absolutePath),
                 arrayOf(mime)
-            ) { _, uri ->
+            ) { _, _ ->
                 Handler(Looper.getMainLooper()).post {
-                    if (!isAdded ||
-                        viewLifecycleOwner.lifecycle.currentState <
-                        androidx.lifecycle.Lifecycle.State.STARTED) return@post
-
-                    if (uri != null) {
-                        val act = activity
-                        if (act != null && !act.isFinishing) {
-                            try {
-                                startActivity(Intent(Intent.ACTION_VIEW).apply {
-                                    setDataAndType(uri, mime)
-                                    addFlags(
-                                        Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                                                Intent.FLAG_ACTIVITY_CLEAR_TOP
-                                    )
-                                })
-                            } catch (_: Exception) {
-                                Toast.makeText(act, "동영상을 열 앱이 없습니다.", Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    } else {
-                        Toast.makeText(requireContext(),
-                            R.string.error_file_not_found, Toast.LENGTH_LONG).show()
+                    if (isAdded) {
+                        updateGalleryThumbnail()
                     }
                 }
             }
         } else {
             Handler(Looper.getMainLooper()).post {
-                if (isAdded)
-                    Toast.makeText(requireContext(),
-                        R.string.recorder_shutdown_error, Toast.LENGTH_LONG).show()
+                if (isAdded) {
+                    Toast.makeText(
+                        requireContext(),
+                        R.string.recorder_shutdown_error,
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         }
 
-        // 상태 플래그 마지막에 내리기
+        // 9) 상태 플래그 정리
         recordingStarted = false
+        
+        // 10) 프래그먼트 재시작 (프리뷰가 멈춘 문제 해결)
+        Handler(Looper.getMainLooper()).post {
+            if (isAdded) {
+                // 프래그먼트를 다시 띄우기 위해 popBackStack 후 같은 프래그먼트로 다시 네비게이션
+                findNavController().popBackStack()
+                
+                // 같은 프래그먼트로 다시 네비게이션하여 완전히 재시작
+                val frontId = getFrontCameraId()
+                if (frontId != null) {
+                    val action = CustomPreviewFragmentDirections
+                        .actionCustomPreviewToCustomFrontPreview(
+                            frontId,
+                            args.width,
+                            args.height,
+                            args.fps,
+                            args.dynamicRange,
+                            args.colorSpace,
+                            args.previewStabilization,
+                            args.useMediaRecorder,
+                            args.videoCodec,
+                            args.filterOn,
+                            args.transfer,
+                            args.useHardware,
+                            "hardware"
+                        ).apply {
+                            setForcePhysicalId(null)
+                        }
+                    findNavController().navigate(action)
+                }
+            }
+        }
     }
 
 
@@ -858,6 +930,63 @@ class CustomFrontPreviewFragment : Fragment() {
 
         fragmentBinding.galleryButton.setImageBitmap(thumb)
     }
+    
+    // 📸 녹화 중 사진 촬영 함수 (미리보기와 동일한 프레임을 저장: PixelCopy)
+    private fun captureStillPicture() {
+        try {
+            val sv = fragmentBinding.viewFinder
+            val bmp = Bitmap.createBitmap(sv.width, sv.height, Bitmap.Config.ARGB_8888)
+            PixelCopy.request(sv, bmp, { result ->
+                if (result != PixelCopy.SUCCESS) {
+                    Toast.makeText(requireContext(), "캡처 실패($result)", Toast.LENGTH_SHORT).show()
+                    return@request
+                }
+
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.KOREA)
+                            .format(System.currentTimeMillis())
+                        val contentValues = ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                            put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/EchoShot")
+                        }
+
+                        val uri = requireContext().contentResolver.insert(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                            contentValues
+                        )
+
+                        uri?.let {
+                            requireContext().contentResolver.openOutputStream(it)?.use { os ->
+                                val ok = bmp.compress(Bitmap.CompressFormat.JPEG, 95, os)
+                                if (!ok) throw RuntimeException("JPEG 압축 실패")
+                            }
+                            MediaScannerConnection.scanFile(
+                                requireContext(),
+                                arrayOf(it.toString()),
+                                arrayOf("image/jpeg"),
+                                null
+                            )
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "사진 저장 완료!", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "사진 저장 실패", e)
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "저장 실패: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }, Handler(Looper.getMainLooper()))
+        } catch (e: Exception) {
+            Log.e(TAG, "사진 촬영 오류", e)
+            Toast.makeText(requireContext(), "사진 촬영 실패: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
     companion object {
         private val TAG = PreviewFragment::class.java.simpleName
         private const val RECORDER_VIDEO_BITRATE: Int = 10_000_000

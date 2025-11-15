@@ -171,6 +171,14 @@
             app:tint="@android:color/white"
             android:clickable="true"
             android:focusable="true" />
+        
+        <!-- Placeholder: 녹화 중 화면 전환 버튼이 사라져도 레이아웃 유지 -->
+        <View
+            android:id="@+id/switch_camera_placeholder"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="32dp"
+            android:visibility="gone" />
     </LinearLayout>
 
     <!-- 촬영 타이머 -->
