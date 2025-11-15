@@ -111,6 +111,8 @@ import android.graphics.drawable.InsetDrawable
 import android.media.ImageReader
 import android.graphics.ImageFormat
 import android.media.Image
+import android.media.MediaMetadataRetriever
+import android.widget.ImageView
 import java.nio.ByteBuffer
 
 
@@ -738,23 +740,23 @@ class CustomPreviewFragment : Fragment() {
                             val (ox, oy) = toOverlayXY(event)
                             focusRing.showAt(ox, oy)
                             showEvBarAt(ox, oy)
-                            
+
                             // 터치 위치에 맞게 EV 자동 설정
                             setEvByTapAbsolute(event.x)
-                            
+
                             // 초점 설정
                             val x = event.x / fragmentBinding.viewFinder.width
                             val y = event.y / fragmentBinding.viewFinder.height
                             triggerFocusAtPoint(x, y)
-                            
+
                             scheduleHideEvBar(2000)
                             return@setOnTouchListener true
                         }
-                        
+
                         // 롱 프레스 초기화
                         longPressFired = false
                         longPressRunnable?.let { v.removeCallbacks(it) }
-                        
+
                         longPressRunnable = Runnable {
                             longPressFired = true
                             val (ox, oy) = toOverlayXY(event)
@@ -788,7 +790,7 @@ class CustomPreviewFragment : Fragment() {
                         longPressRunnable = null
                         longPressFired = false
                     }
-                    
+
                     if (!isScaling && evDragging && longPressFired) {
                         // 기존과 동일: 가로 드래그로 상대 변경(미세 조절)
                         val deltaPx = event.x - evStartX
@@ -805,7 +807,7 @@ class CustomPreviewFragment : Fragment() {
                     // 롱 프레스 취소
                     longPressRunnable?.let { v.removeCallbacks(it) }
                     longPressRunnable = null
-                    
+
                     evDragging = false
                     scheduleHideEvBar()
 
@@ -816,7 +818,7 @@ class CustomPreviewFragment : Fragment() {
 
                         if (!isCurrentlyRecording() && !autoZoom.isActive) showLensHUD()
                     }
-                    
+
                     longPressFired = false
                 }
             }
@@ -1324,13 +1326,17 @@ class CustomPreviewFragment : Fragment() {
 
             // 🔥 상단 우측 버튼을 '오토줌 토글' 모드로 전환
             updateTopRightButton()
-            
+
             // 📸 갤러리 버튼을 사진 촬영 버튼으로 변경
             galleryButtonOriginalDrawable = fragmentBinding.galleryButton.drawable
             fragmentBinding.galleryButton.setImageResource(R.drawable.ic_shutter_normal)
             fragmentBinding.galleryButton.setOnClickListener {
                 captureStillPicture()
             }
+            
+            // 🎥 녹화 중에는 렌즈 선택 버튼과 사진 모드 버튼 숨기기
+            fragmentBinding.lensSelector.visibility = View.GONE
+            requireView().findViewById<View>(R.id.btn_mode_photo)?.visibility = View.GONE
         }
 
         // MediaStore에 JSONL 파일 등록
@@ -1441,7 +1447,7 @@ class CustomPreviewFragment : Fragment() {
             recordingStarted = false
             // 🔥 상단 우측 버튼을 '전면 전환' 모드로 복귀
             updateTopRightButton()
-            
+
             // 📸 갤러리 버튼을 원래대로 복원
             galleryButtonOriginalDrawable?.let {
                 fragmentBinding.galleryButton.setImageDrawable(it)
@@ -1451,6 +1457,10 @@ class CustomPreviewFragment : Fragment() {
             galleryButtonOriginalClickListener?.let {
                 fragmentBinding.galleryButton.setOnClickListener(it)
             }
+            
+            // 🎥 녹화 종료 시 렌즈 선택 버튼과 사진 모드 버튼 다시 보이기
+            fragmentBinding.lensSelector.visibility = View.VISIBLE
+            requireView().findViewById<View>(R.id.btn_mode_photo)?.visibility = View.VISIBLE
         }
 
         // 11. UI 화면 복귀는 무조건 메인스레드에서 안전하게 실행
@@ -1902,34 +1912,51 @@ class CustomPreviewFragment : Fragment() {
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
             "Camera2App"
         )
+
+        Log.d("ThumbDebug", "dir path = ${dir.absolutePath}, exists=${dir.exists()}")
+
         val videoFiles = dir.listFiles { f -> f.extension.equals("mp4", true) }
-            ?.sortedByDescending { it.lastModified() }
-            ?: return
-
-        val latest = videoFiles.firstOrNull() ?: return
-
-        val targetPx = 300
-        val thumb = try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // Android 10+: File 객체 + Size
-                ThumbnailUtils.createVideoThumbnail(
-                    latest,
-                    Size(targetPx, targetPx),
-                    null
-                )
-            } else {
-                // 이하: 경로 + 비디오 전용 MINI_KIND
-                ThumbnailUtils.createVideoThumbnail(
-                    latest.absolutePath,
-                    MediaStore.Video.Thumbnails.MINI_KIND   // ← 여기 수정
-                )
+            ?: run {
+                Log.d("ThumbDebug", "listFiles() == null")
+                return
             }
-        } catch (e: IOException) {
-            e.printStackTrace()
-            null
-        } ?: return
 
-        fragmentBinding.galleryButton.setImageBitmap(thumb)
+        Log.d("ThumbDebug", "mp4 count = ${videoFiles.size}")
+
+        val latest = videoFiles
+            .sortedByDescending { it.lastModified() }
+            .firstOrNull()
+            ?: run {
+                Log.d("ThumbDebug", "no latest mp4 found (size=${videoFiles.size})")
+                return
+            }
+
+        Log.d("ThumbDebug", "latest file = ${latest.absolutePath}, lastModified=${latest.lastModified()}")
+
+        // 🔥 ThumbnailUtils 대신 MediaMetadataRetriever로 직접 썸네일 만들기
+        val thumb = try {
+            val retriever = MediaMetadataRetriever()
+            retriever.setDataSource(latest.absolutePath)
+            // 0초 근처 키프레임 하나 가져오기
+            val bmp = retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            retriever.release()
+            bmp
+        } catch (e: Exception) {
+            Log.e("ThumbDebug", "MediaMetadataRetriever 썸네일 생성 실패", e)
+            null
+        }
+
+        if (thumb == null) {
+            Log.d("ThumbDebug", "썸네일이 null이라 갤러리 버튼 업데이트 스킵")
+            return
+        }
+
+        Log.d("ThumbDebug", "썸네일 생성 성공 → 버튼에 적용")
+
+        fragmentBinding.galleryButton.post {
+            fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_CROP
+            fragmentBinding.galleryButton.setImageBitmap(thumb)
+        }
     }
 
     // 📸 녹화 중 사진 촬영 함수 (미리보기와 동일한 프레임을 저장: PixelCopy)
