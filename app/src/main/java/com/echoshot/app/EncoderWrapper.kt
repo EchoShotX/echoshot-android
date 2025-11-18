@@ -17,6 +17,8 @@
 package com.echoshot.app
 
 import android.hardware.camera2.params.DynamicRangeProfiles
+import android.media.AudioFormat
+import android.media.AudioRecord
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -52,6 +54,12 @@ class EncoderWrapper(private val name: String,
         val TAG = "EncoderWrapper"
         val VERBOSE = false
         val IFRAME_INTERVAL = 1 // sync one frame every second
+        
+        // 오디오 설정
+        private const val AUDIO_SAMPLE_RATE = 44100
+        private const val AUDIO_CHANNEL_COUNT = 1 // 모노
+        private const val AUDIO_BIT_RATE = 64000 // 64kbps
+        private const val AUDIO_MIME_TYPE = "audio/mp4a-latm" // AAC
     }
 
     private val mWidth = width
@@ -76,7 +84,7 @@ class EncoderWrapper(private val name: String,
         if (useMediaRecorder) {
             null
         } else {
-            EncoderThread(mEncoder!!, outputFile, mOrientationHint,frameEncodedListener)
+            EncoderThread(name, mEncoder!!, outputFile, mOrientationHint, frameEncodedListener, mAudioEncoder, mAudioRecord)
         }
     }
 
@@ -108,6 +116,10 @@ class EncoderWrapper(private val name: String,
     }
 
     private var mMediaRecorder: MediaRecorder? = null
+
+    // 오디오 관련 변수
+    private var mAudioRecord: AudioRecord? = null
+    private var mAudioEncoder: MediaCodec? = null
 
     // ① 프레임 타임스탬프 전달용 콜백 인터페이스
     fun interface OnFrameEncodedListener {
@@ -203,6 +215,70 @@ class EncoderWrapper(private val name: String,
             // Create a MediaCodec encoder, and configure it with our format.  Get a Surface
             // we can use for input and wrap it with a class that handles the EGL work.
             mEncoder!!.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            
+            // ✅ 오디오 인코더 및 AudioRecord 초기화
+            setupAudioEncoder()
+        }
+    }
+    
+    /**
+     * 오디오 인코더 및 AudioRecord 설정
+     */
+    private fun setupAudioEncoder() {
+        try {
+            // 오디오 포맷 생성
+            val audioFormat = MediaFormat.createAudioFormat(
+                AUDIO_MIME_TYPE,
+                AUDIO_SAMPLE_RATE,
+                AUDIO_CHANNEL_COUNT
+            ).apply {
+                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                setInteger(MediaFormat.KEY_BIT_RATE, AUDIO_BIT_RATE)
+                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
+            }
+            
+            // 오디오 인코더 생성 및 설정
+            mAudioEncoder = MediaCodec.createEncoderByType(AUDIO_MIME_TYPE)
+            mAudioEncoder?.configure(audioFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            
+            // AudioRecord 설정
+            val channelConfig = AudioFormat.CHANNEL_IN_MONO
+            val audioEncoding = AudioFormat.ENCODING_PCM_16BIT
+            val bufferSize = AudioRecord.getMinBufferSize(
+                AUDIO_SAMPLE_RATE,
+                channelConfig,
+                audioEncoding
+            ) * 2
+            
+            if (bufferSize <= 0) {
+                Log.e(TAG, "❌ AudioRecord 버퍼 크기 계산 실패")
+                mAudioEncoder = null
+                mAudioRecord = null
+                return
+            }
+            
+            mAudioRecord = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                AUDIO_SAMPLE_RATE,
+                channelConfig,
+                audioEncoding,
+                bufferSize
+            )
+            
+            if (mAudioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                Log.e(TAG, "❌ AudioRecord 초기화 실패")
+                mAudioRecord?.release()
+                mAudioRecord = null
+                mAudioEncoder?.release()
+                mAudioEncoder = null
+                return
+            }
+            
+            Log.d(TAG, "✅ 오디오 인코더 및 AudioRecord 초기화 완료 (버퍼 크기: $bufferSize)")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 오디오 인코더 설정 실패", e)
+            mAudioEncoder = null
+            mAudioRecord = null
         }
     }
 
@@ -228,6 +304,9 @@ class EncoderWrapper(private val name: String,
             }
         } else {
             mEncoder!!.start()
+            
+            // ✅ 오디오 인코더 시작
+            mAudioEncoder?.start()
 
             // Start the encoder thread last.  That way we're sure it can see all of the state
             // we've initialized.
@@ -269,6 +348,12 @@ class EncoderWrapper(private val name: String,
 
             mEncoder!!.stop()
             mEncoder!!.release()
+            
+            // ✅ 오디오 정리
+            mAudioRecord?.stop()
+            mAudioRecord?.release()
+            mAudioEncoder?.stop()
+            mAudioEncoder?.release()
         }
         return true
     }
@@ -320,6 +405,19 @@ class EncoderWrapper(private val name: String,
                 Log.w(TAG, "⚠️ 두 번째 인코더 release 중 예외 발생: ${e.message}")
                 allSuccess = false
             }
+            
+            // ✅ 오디오 정리 (각 인스턴스의 shutdown()에서 처리되지만, 여기서도 명시적으로 정리)
+            try {
+                mAudioRecord?.stop()
+                mAudioRecord?.release()
+                mAudioEncoder?.stop()
+                mAudioEncoder?.release()
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ 첫 번째 오디오 인코더 정리 중 예외 발생: ${e.message}")
+                allSuccess = false
+            }
+            
+            // other 인스턴스의 오디오는 other.shutdown()에서 처리됨
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ 인코더 셧다운 중 예외 발생: ${e.message}")
@@ -372,10 +470,13 @@ class EncoderWrapper(private val name: String,
      * should be fully started before the thread is created, and not shut down until this
      * thread has been joined.
      */
-    private class EncoderThread(mediaCodec: MediaCodec,
+    private class EncoderThread(private val name: String,
+                                mediaCodec: MediaCodec,
                                 outputFile: File,
                                 orientationHint: Int,
-                                private var listener: OnFrameEncodedListener?
+                                private var listener: OnFrameEncodedListener?,
+                                private val audioEncoder: MediaCodec?,
+                                private val audioRecord: AudioRecord?
                             ): Thread() {
         val mEncoder = mediaCodec
         var mEncodedFormat: MediaFormat? = null
@@ -383,6 +484,19 @@ class EncoderWrapper(private val name: String,
         val mMuxer = MediaMuxer(outputFile.getPath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         val mOrientationHint = orientationHint
         var mVideoTrack: Int = -1
+        
+        // 오디오 관련 변수
+        var mAudioTrack: Int = -1
+        var mAudioFormat: MediaFormat? = null
+        val mAudioBufferInfo = MediaCodec.BufferInfo()
+        @Volatile
+        private var mAudioRecording = false
+        private var mAudioThread: Thread? = null
+        private var mAudioDrainThread: Thread? = null
+        private var mAudioSampleCount: Long = 0 // 오디오 샘플 카운터 (타임스탬프 계산용)
+        private val AUDIO_SAMPLE_RATE = 44100L // 샘플레이트
+        @Volatile
+        private var mFirstVideoTimestamp: Long = -1 // 첫 비디오 프레임 타임스탬프 (오디오 동기화용)
 
         var mHandler: EncoderHandler? = null
         var mFrameNum: Int = 0
@@ -401,6 +515,12 @@ class EncoderWrapper(private val name: String,
             Looper.prepare()
             mHandler = EncoderHandler(this)    // must create on encoder thread
             Log.d(TAG, "encoder thread ready")
+            
+            // ✅ 오디오 녹음 및 인코딩 스레드 시작
+            if (audioEncoder != null && audioRecord != null) {
+                startAudioRecording()
+            }
+            
             synchronized (mLock) {
                 mReady = true
                 mLock.notify()    // signal waitUntilReady()
@@ -408,11 +528,187 @@ class EncoderWrapper(private val name: String,
 
             Looper.loop()
 
+            // ✅ 오디오 정리
+            stopAudioRecording()
+            
             synchronized (mLock) {
                 mReady = false
                 mHandler = null
             }
             Log.d(TAG, "looper quit")
+        }
+        
+        /**
+         * 오디오 녹음 시작
+         */
+        private fun startAudioRecording() {
+            if (audioRecord == null || audioEncoder == null) return
+            
+            mAudioRecording = true
+            mAudioSampleCount = 0 // 샘플 카운터 초기화
+            
+            // 오디오 입력 스레드 (AudioRecord -> MediaCodec)
+            mAudioThread = Thread {
+                val buffer = ByteArray(4096)
+                try {
+                    audioRecord.startRecording()
+                    Log.d(TAG, "🎵 AudioRecord 녹음 시작")
+                    
+                    while (mAudioRecording) {
+                        val readSize = audioRecord.read(buffer, 0, buffer.size)
+                        if (readSize > 0) {
+                            val inputBufferIndex = audioEncoder.dequeueInputBuffer(10000)
+                            if (inputBufferIndex >= 0) {
+                                val inputBuffer = audioEncoder.getInputBuffer(inputBufferIndex)
+                                inputBuffer?.clear()
+                                inputBuffer?.put(buffer, 0, readSize)
+                                
+                                // ✅ 샘플 수 기반 타임스탬프 계산 (16-bit 모노 = 2 bytes per sample)
+                                val samplesRead = readSize / 2
+                                val presentationTimeUs = (mAudioSampleCount * 1_000_000L) / AUDIO_SAMPLE_RATE
+                                mAudioSampleCount += samplesRead
+                                
+                                audioEncoder.queueInputBuffer(
+                                    inputBufferIndex,
+                                    0,
+                                    readSize,
+                                    presentationTimeUs,
+                                    0
+                                )
+                            }
+                        } else if (readSize == AudioRecord.ERROR_INVALID_OPERATION) {
+                            Log.e(TAG, "❌ AudioRecord 읽기 오류: ERROR_INVALID_OPERATION")
+                            break
+                        } else if (readSize == AudioRecord.ERROR_BAD_VALUE) {
+                            Log.e(TAG, "❌ AudioRecord 읽기 오류: ERROR_BAD_VALUE")
+                            break
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ 오디오 녹음 중 예외 발생", e)
+                } finally {
+                    try {
+                        audioRecord.stop()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ AudioRecord stop 중 예외", e)
+                    }
+                    Log.d(TAG, "🎵 AudioRecord 녹음 종료")
+                }
+            }
+            
+            // 오디오 인코더 출력 처리 스레드
+            mAudioDrainThread = Thread {
+                drainAudioEncoder()
+            }
+            
+            mAudioThread?.start()
+            mAudioDrainThread?.start()
+        }
+        
+        /**
+         * 오디오 녹음 중지
+         */
+        private fun stopAudioRecording() {
+            mAudioRecording = false
+            
+            // 오디오 인코더에 EOS 신호
+            try {
+                if (audioEncoder != null) {
+                    val inputBufferIndex = audioEncoder.dequeueInputBuffer(10000)
+                    if (inputBufferIndex >= 0) {
+                        audioEncoder.queueInputBuffer(
+                            inputBufferIndex,
+                            0,
+                            0,
+                            0,
+                            MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ 오디오 EOS 신호 전송 중 예외", e)
+            }
+            
+            // 스레드 종료 대기
+            try {
+                mAudioThread?.join(1000)
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ 오디오 스레드 join 중 예외", e)
+            }
+            
+            try {
+                mAudioDrainThread?.join(2000)
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ 오디오 드레인 스레드 join 중 예외", e)
+            }
+        }
+        
+        /**
+         * 오디오 인코더 출력 처리
+         */
+        private fun drainAudioEncoder() {
+            if (audioEncoder == null) return
+            
+            var sawEOS = false
+            
+            while (!sawEOS || mAudioTrack != -1) {
+                val outputBufferIndex = audioEncoder.dequeueOutputBuffer(mAudioBufferInfo, 10000)
+                
+                when {
+                    outputBufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                        if (!mAudioRecording) {
+                            break
+                        }
+                    }
+                    outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        mAudioFormat = audioEncoder.outputFormat
+                        Log.d(TAG, "🎵 오디오 포맷 변경: $mAudioFormat")
+                        
+                        // 비디오 트랙이 이미 추가되어 있으면 오디오 트랙도 추가
+                        synchronized(mMuxer) {
+                            if (mVideoTrack != -1 && mAudioTrack == -1 && mAudioFormat != null) {
+                                mAudioTrack = mMuxer.addTrack(mAudioFormat!!)
+                                Log.d(TAG, "🎵 오디오 트랙 추가됨 (비디오 트랙 이후)")
+                            }
+                        }
+                    }
+                    outputBufferIndex >= 0 -> {
+                        val outputBuffer = audioEncoder.getOutputBuffer(outputBufferIndex)
+                        if (outputBuffer != null && mAudioBufferInfo.size > 0) {
+                            outputBuffer.position(mAudioBufferInfo.offset)
+                            outputBuffer.limit(mAudioBufferInfo.offset + mAudioBufferInfo.size)
+                            
+                            // ✅ 오디오 타임스탬프는 이미 0부터 시작하므로 그대로 사용 (비디오와 동일하게 정규화됨)
+                            val adjustedAudioTimestamp = mAudioBufferInfo.presentationTimeUs
+                            
+                            // 타임스탬프 조정된 BufferInfo 생성
+                            val adjustedBufferInfo = MediaCodec.BufferInfo().apply {
+                                set(
+                                    mAudioBufferInfo.offset,
+                                    mAudioBufferInfo.size,
+                                    adjustedAudioTimestamp,
+                                    mAudioBufferInfo.flags
+                                )
+                            }
+                            
+                            // 비디오 트랙이 준비되어 있고 오디오 트랙도 추가되었으면 기록
+                            synchronized(mMuxer) {
+                                if (mVideoTrack != -1 && mAudioTrack != -1) {
+                                    mMuxer.writeSampleData(mAudioTrack, outputBuffer, adjustedBufferInfo)
+                                }
+                            }
+                        }
+                        audioEncoder.releaseOutputBuffer(outputBufferIndex, false)
+                        
+                        if ((mAudioBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                            Log.d(TAG, "🎵 오디오 End of Stream 도달")
+                            sawEOS = true
+                        }
+                    }
+                }
+            }
+            
+            Log.d(TAG, "🎵 오디오 인코더 드레인 종료")
         }
 
         /**
@@ -500,14 +796,47 @@ class EncoderWrapper(private val name: String,
                         encodedData.position(mBufferInfo.offset)
                         encodedData.limit(mBufferInfo.offset + mBufferInfo.size)
 
-                        if (mVideoTrack == -1) {
-                            mVideoTrack = mMuxer.addTrack(mEncodedFormat!!)
-                            mMuxer.setOrientationHint(mOrientationHint)
-                            mMuxer.start()
-                            Log.d(TAG, "🟢 [$name] MediaMuxer 시작됨 (트랙 추가 완료)")
+                        synchronized(mMuxer) {
+                            if (mVideoTrack == -1) {
+                                mVideoTrack = mMuxer.addTrack(mEncodedFormat!!)
+                                mMuxer.setOrientationHint(mOrientationHint)
+                                
+                                // ✅ 첫 비디오 프레임 타임스탬프 저장 (오디오 동기화용)
+                                mFirstVideoTimestamp = mBufferInfo.presentationTimeUs
+                                Log.d(TAG, "🎬 [$name] 첫 비디오 타임스탬프: $mFirstVideoTimestamp")
+                                
+                                // 오디오 트랙이 이미 준비되어 있으면 함께 추가
+                                if (mAudioFormat != null && mAudioTrack == -1) {
+                                    mAudioTrack = mMuxer.addTrack(mAudioFormat!!)
+                                    Log.d(TAG, "🎵 오디오 트랙 추가됨 (비디오 트랙과 함께)")
+                                }
+                                
+                                mMuxer.start()
+                                Log.d(TAG, "🟢 [$name] MediaMuxer 시작됨 (비디오 트랙 추가 완료)")
+                            }
                         }
 
-                        mMuxer.writeSampleData(mVideoTrack, encodedData, mBufferInfo)
+                        synchronized(mMuxer) {
+                            if (mVideoTrack != -1) {
+                                // ✅ 비디오 타임스탬프를 0부터 시작하도록 정규화
+                                val normalizedVideoTimestamp = if (mFirstVideoTimestamp >= 0) {
+                                    mBufferInfo.presentationTimeUs - mFirstVideoTimestamp
+                                } else {
+                                    mBufferInfo.presentationTimeUs
+                                }
+                                
+                                val normalizedVideoBufferInfo = MediaCodec.BufferInfo().apply {
+                                    set(
+                                        mBufferInfo.offset,
+                                        mBufferInfo.size,
+                                        normalizedVideoTimestamp,
+                                        mBufferInfo.flags
+                                    )
+                                }
+                                
+                                mMuxer.writeSampleData(mVideoTrack, encodedData, normalizedVideoBufferInfo)
+                            }
+                        }
 
                         listener?.onFrameEncoded(mBufferInfo.presentationTimeUs)
 
@@ -559,6 +888,10 @@ class EncoderWrapper(private val name: String,
          */
         fun shutdown() {
             if (VERBOSE) Log.d(TAG, "shutdown")
+            
+            // ✅ 오디오 녹음 중지
+            stopAudioRecording()
+            
             Looper.myLooper()!!.quit()
             mMuxer.stop()
             mMuxer.release()
