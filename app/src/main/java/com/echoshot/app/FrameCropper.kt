@@ -349,6 +349,20 @@ class FrameCropper(
         val inW = inFmt.getInteger(MediaFormat.KEY_WIDTH)
         val inH = inFmt.getInteger(MediaFormat.KEY_HEIGHT)
         Log.d(TAG, "입력 비디오 포맷 해상도: ${inW}x${inH}")
+        
+        // ✅ 오디오 트랙 찾기
+        var audioTrack: Int? = null
+        var audioFormat: MediaFormat? = null
+        for (i in 0 until extractor.trackCount) {
+            val format = extractor.getTrackFormat(i)
+            val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+            if (mime.startsWith("audio/")) {
+                audioTrack = i
+                audioFormat = format
+                Log.d(TAG, "✅ 오디오 트랙 발견: track=$i, mime=$mime, sampleRate=${format.getInteger(MediaFormat.KEY_SAMPLE_RATE)}, channelCount=${format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)}")
+                break
+            }
+        }
 
         val mime = MediaFormat.MIMETYPE_VIDEO_AVC
         val encoder = MediaCodec.createEncoderByType(mime)
@@ -405,6 +419,15 @@ class FrameCropper(
 
         val muxer = MediaMuxer(dstPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+        
+        // ✅ 오디오 extractor 생성 (비디오와 별도로 읽기 위해)
+        val audioExtractor = if (audioTrack != null) {
+            MediaExtractor().apply {
+                setDataSource(srcPath)
+                selectTrack(audioTrack!!)
+                seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+            }
+        } else null
 
         // ★ 분리된 BufferInfo
         val decInfo = MediaCodec.BufferInfo()
@@ -412,9 +435,16 @@ class FrameCropper(
 
         var muxerStarted = false
         var outTrackIdx = -1
+        var outAudioTrackIdx = -1  // ✅ 오디오 트랙 인덱스
         var renderIdx = 0       // 렌더(디코더 출력) 기준 프레임 인덱스
         var encodedIdx = 0      // 인코더가 실제 낸 프레임(CodecConfig 제외) 카운트
         var sawEOS = false
+        
+        // ✅ 오디오 트랙을 MediaMuxer에 추가
+        if (audioTrack != null && audioFormat != null) {
+            outAudioTrackIdx = muxer.addTrack(audioFormat!!)
+            Log.d(TAG, "✅ 오디오 트랙을 MediaMuxer에 추가: trackIdx=$outAudioTrackIdx")
+        }
 
         var lastPtsUs = -1L
         var maxPresentedPtsUs = -1L
@@ -571,8 +601,12 @@ class FrameCropper(
                             MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                                 if (!muxerStarted) {
                                     outTrackIdx = muxer.addTrack(encoder.outputFormat)
-                                    muxer.start()
-                                    muxerStarted = true
+                                    // ✅ 비디오와 오디오 트랙이 모두 준비되면 muxer 시작
+                                    if (outAudioTrackIdx >= 0 || audioTrack == null) {
+                                        muxer.start()
+                                        muxerStarted = true
+                                        Log.d(TAG, "✅ MediaMuxer 시작 (비디오: $outTrackIdx, 오디오: $outAudioTrackIdx)")
+                                    }
                                 }
                             }
                             else -> if (encIndex >= 0) {
@@ -680,6 +714,43 @@ class FrameCropper(
                 }
             }
 
+            // ✅ 비디오 처리 완료 후 오디오 모두 읽기
+            if (audioExtractor != null && muxerStarted && outAudioTrackIdx >= 0) {
+                while (true) {
+                    val audioSampleTime = audioExtractor.sampleTime
+                    if (audioSampleTime < 0) {
+                        break
+                    }
+                    
+                    val audioSampleFlags = audioExtractor.sampleFlags
+                    val audioByteBuffer = ByteBuffer.allocateDirect(4096)
+                    val audioSize = audioExtractor.readSampleData(audioByteBuffer, 0)
+                    
+                    if (audioSize < 0) {
+                        break
+                    }
+                    
+                    audioByteBuffer.position(0)
+                    audioByteBuffer.limit(audioSize)
+                    
+                    var bufferFlags = 0
+                    if ((audioSampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                        bufferFlags = bufferFlags or MediaCodec.BUFFER_FLAG_KEY_FRAME
+                    }
+                    if ((audioSampleFlags and MediaExtractor.SAMPLE_FLAG_PARTIAL_FRAME) != 0) {
+                        bufferFlags = bufferFlags or MediaCodec.BUFFER_FLAG_PARTIAL_FRAME
+                    }
+                    
+                    val audioBufferInfo = MediaCodec.BufferInfo().apply {
+                        set(0, audioSize, audioSampleTime, bufferFlags)
+                    }
+                    
+                    muxer.writeSampleData(outAudioTrackIdx, audioByteBuffer, audioBufferInfo)
+                    audioExtractor.advance()
+                }
+                Log.d(TAG, "🎵 오디오 모두 읽기 완료")
+            }
+            
             // 2) 인코더에 EOS 신호 (Surface 입력)
             if (Build.VERSION.SDK_INT >= 18) {
                 // 마지막 "실제" 프레임 다음 PTS를 패드 시작점으로 기록
@@ -697,8 +768,12 @@ class FrameCropper(
                     encIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                         if (!muxerStarted) {
                             outTrackIdx = muxer.addTrack(encoder.outputFormat)
-                            muxer.start()
-                            muxerStarted = true
+                            // ✅ 비디오와 오디오 트랙이 모두 준비되면 muxer 시작
+                            if (outAudioTrackIdx >= 0 || audioTrack == null) {
+                                muxer.start()
+                                muxerStarted = true
+                                Log.d(TAG, "✅ MediaMuxer 시작 (비디오: $outTrackIdx, 오디오: $outAudioTrackIdx)")
+                            }
                         }
                     }
                     encIndex >= 0 -> {
@@ -741,6 +816,7 @@ class FrameCropper(
         decoder.stop(); decoder.release()
         encoder.stop(); encoder.release()
         extractor.release()
-        Log.d(TAG, "크롭 작업 완료: 렌더=${renderIdx}, 인코딩=${encodedIdx}")
+        audioExtractor?.release()
+        Log.d(TAG, "크롭 작업 완료: 렌더=${renderIdx}, 인코딩=${encodedIdx}, 오디오=${if (audioTrack != null) "포함" else "없음"}")
     }
 }
