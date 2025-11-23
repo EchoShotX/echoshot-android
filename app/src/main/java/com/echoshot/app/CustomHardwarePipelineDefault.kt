@@ -327,7 +327,7 @@ private val EGL_SMPTE2086_MIN_LUMINANCE_EXT            = 0x334A
 
 class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn: Boolean, transfer: Int,
                               dynamicRange: Long, characteristics: CameraCharacteristics, encoder: EncoderWrapper, private val originalEncoder: EncoderWrapper,
-                              viewFinder: AutoFitSurfaceView) : Pipeline(width, height, fps, filterOn, dynamicRange,
+                              viewFinder: AutoFitSurfaceView, private val physicalCameraId: String? = null) : Pipeline(width, height, fps, filterOn, dynamicRange,
     characteristics, encoder, viewFinder) {
     private val renderThread: HandlerThread by lazy {
         val renderThread = HandlerThread("Camera2Video.RenderThread")
@@ -336,7 +336,7 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
     }
 
     private val renderHandler = RenderHandler(renderThread.getLooper(),
-        width, height, fps, filterOn, transfer, dynamicRange, characteristics, encoder, originalEncoder, viewFinder)
+        width, height, fps, filterOn, transfer, dynamicRange, characteristics, encoder, originalEncoder, viewFinder, physicalCameraId)
 
     override fun createRecordRequest(session: CameraCaptureSession,
                                      previewStabilization: Boolean) : CaptureRequest {
@@ -440,7 +440,7 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
     private class RenderHandler(looper: Looper, width: Int, height: Int, fps: Int,
                                 filterOn: Boolean, transfer: Int, dynamicRange: Long,
                                 characteristics: CameraCharacteristics, encoder: EncoderWrapper, private val originalEncoder: EncoderWrapper,
-                                viewFinder: AutoFitSurfaceView): Handler(looper),
+                                viewFinder: AutoFitSurfaceView, private val physicalCameraId: String? = null): Handler(looper),
         SurfaceTexture.OnFrameAvailableListener {
         companion object {
             val MSG_CREATE_RESOURCES = 0
@@ -458,6 +458,7 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
         private val transfer = transfer
         private val dynamicRange = dynamicRange
         private val encoder = encoder
+        private val characteristics = characteristics
 
         private val viewFinder = viewFinder
 
@@ -595,7 +596,55 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
                     set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
                         CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION)
                 }
+
+                // ✅ 2) 센서에서 16:9로 센터-크롭 강제
+                apply16x9Crop(this, physicalCameraId)
             }.build()
+        }
+
+        // ✅ 센서에서 16:9로 센터-크롭 강제 적용
+        private fun apply16x9Crop(builder: CaptureRequest.Builder, forcePhysicalId: String?) {
+            val targetAR = 16f / 9f
+            if (forcePhysicalId.isNullOrEmpty()) {
+                val active = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+                val cropRect = cropActiveToAspect(active, targetAR)
+                builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+            } else {
+                try {
+                    val cameraManager = viewFinder.context.getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                    val physChars = cameraManager.getCameraCharacteristics(forcePhysicalId)
+                    val active = physChars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+                    val cropRect = cropActiveToAspect(active, targetAR)
+                    // 세션 생성 시 setPhysicalCameraId로 라우팅했으므로 일반 set 사용
+                    // 논리 카메라를 사용할 때는 setPhysicalCameraKey가 세션에 등록되지 않을 수 있음
+                    builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+                } catch (e: Exception) {
+                    android.util.Log.w("CameraAspectRatio", "Failed to apply 16:9 crop: ${e.message}")
+                }
+            }
+        }
+
+        // ✅ 센서 Active Array를 16:9로 센터-크롭
+        private fun cropActiveToAspect(active: android.graphics.Rect, targetAR: Float): android.graphics.Rect {
+            val curAR = active.width().toFloat() / active.height().toFloat()
+            val (w, h) = if (curAR > targetAR) {
+                // 현재가 더 넓음 → 높이 기준으로 너비 조정
+                val h = active.height()
+                val w = (h * targetAR).toInt()
+                w to h
+            } else {
+                // 현재가 더 좁음 → 너비 기준으로 높이 조정
+                val w = active.width()
+                val h = (w / targetAR).toInt()
+                w to h
+            }
+            val cx = active.centerX()
+            val cy = active.centerY()
+            val left = (cx - w / 2).coerceAtLeast(active.left)
+            val top = (cy - h / 2).coerceAtLeast(active.top)
+            val right = (left + w).coerceAtMost(active.right)
+            val bottom = (top + h).coerceAtMost(active.bottom)
+            return android.graphics.Rect(left, top, right, bottom)
         }
 
         public fun setPreviewSize(previewSize: Size) {

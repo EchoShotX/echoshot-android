@@ -23,13 +23,36 @@
             android:background="@drawable/rounded_bg_dark">
 
             <!-- 1) 썸네일 -->
-            <ImageView
-                android:id="@+id/thumb"
-                android:layout_width="240dp"
-                android:layout_height="135dp"
-                android:scaleType="centerCrop"
-                android:layout_gravity="center_horizontal"
-                android:background="@android:color/black"/>
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <androidx.constraintlayout.widget.Guideline
+                    android:id="@+id/guidelineStart"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    app:layout_constraintGuide_percent="0.1"/>
+
+                <androidx.constraintlayout.widget.Guideline
+                    android:id="@+id/guidelineEnd"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    app:layout_constraintGuide_percent="0.9"/>
+
+                <ImageView
+                    android:id="@+id/thumb"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:scaleType="centerCrop"
+                    android:background="@android:color/black"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintStart_toStartOf="@id/guidelineStart"
+                    app:layout_constraintEnd_toEndOf="@id/guidelineEnd"
+                    app:layout_constraintDimensionRatio="9:16"/>
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
 
             <Space android:layout_width="0dp" android:layout_height="16dp"/>
 

@@ -112,6 +112,7 @@ import android.media.ImageReader
 import android.graphics.ImageFormat
 import android.media.Image
 import android.media.MediaMetadataRetriever
+import android.media.MediaRecorder
 import android.widget.ImageView
 import java.nio.ByteBuffer
 
@@ -182,11 +183,13 @@ class CustomPreviewFragment : Fragment() {
         when (args.pipelineMode) {
             "hardware" -> CustomHardwarePipeline(
                 args.width, args.height, args.fps, args.filterOn, args.transfer,
-                args.dynamicRange, characteristics, encoder, originalencoder, fragmentBinding.viewFinder
+                args.dynamicRange, characteristics, encoder, originalencoder, fragmentBinding.viewFinder,
+                args.forcePhysicalId  // ✅ 물리 카메라 ID 전달
             )
             "hybrid" -> CustomHardwarePipelineDefault( // Hybrid 모드는 기본 줌 적용 파이프라인이라고 가정
                 args.width, args.height, args.fps, args.filterOn, args.transfer,
-                args.dynamicRange, characteristics, encoder, originalencoder, fragmentBinding.viewFinder
+                args.dynamicRange, characteristics, encoder, originalencoder, fragmentBinding.viewFinder,
+                args.forcePhysicalId  // ✅ 물리 카메라 ID 전달
             )
             "software" -> SoftwarePipeline(
                 args.width, args.height, args.fps, args.filterOn,
@@ -304,6 +307,12 @@ class CustomPreviewFragment : Fragment() {
 
     /** SurfaceView bitmap → 모델 추론용 PixelCopy 루프 함수 */
     private fun startPixelCopyLoop() {
+        // 중복 실행 방지: 이미 실행 중이면 무시
+        if (::pixelThread.isInitialized && pixelThread.isAlive) {
+            Log.w(TAG, "PixelCopy 루프가 이미 실행 중입니다")
+            return
+        }
+        
         // 1) 백그라운드 스레드
         pixelThread = HandlerThread("PixelCopyThread").apply { start() }
         pixelHandler = Handler(pixelThread.looper)
@@ -852,12 +861,16 @@ class CustomPreviewFragment : Fragment() {
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
             override fun surfaceCreated(holder: SurfaceHolder) {
-                // 권장 사이즈로 선택
-                val previewSize = getPreviewOutputSize(
-                    fragmentBinding.viewFinder.display,
-                    characteristics,
-                    SurfaceHolder::class.java
-                )
+                // ✅ 1) 물리 카메라별로 16:9 프리뷰 사이즈 선택
+                val previewSize = if (args.forcePhysicalId != null) {
+                    pickPreviewSize16x9For(args.forcePhysicalId!!, SurfaceHolder::class.java)
+                } else {
+                    getPreviewOutputSize(
+                        fragmentBinding.viewFinder.display,
+                        characteristics,
+                        SurfaceHolder::class.java
+                    )
+                }
 
                 // 뷰 비율/버퍼 고정 (버퍼를 먼저 고정해 두면 크롭 이슈가 줄어듦)
                 holder.setFixedSize(previewSize.width, previewSize.height)
@@ -880,7 +893,7 @@ class CustomPreviewFragment : Fragment() {
                 fragmentBinding.viewFinder.post {
                     pipeline.createResources(holder.surface)
                     initializeCamera()
-                    startPixelCopyLoop()
+                    // ✅ PixelCopy 루프는 녹화 시작 시에만 실행 (발열 방지)
                 }
             }
 
@@ -888,6 +901,8 @@ class CustomPreviewFragment : Fragment() {
 
 
 
+        // ✅ 파이프라인 모드 스위칭 기능 - 당장 사용하지 않으므로 주석처리
+        /*
         val whiteColor = ContextCompat.getColor(requireContext(), android.R.color.white)
         val defaultColor = ContextCompat.getColor(requireContext(), android.R.color.darker_gray)
 
@@ -921,6 +936,7 @@ class CustomPreviewFragment : Fragment() {
                 fragmentBinding.iconNozoom.setOnClickListener(null)
             }
         }
+        */
 
         //오버레이 UI 생성 코드--------------------------
         // 0) 카메라가 지원하는 EV 범위/스텝 읽기
@@ -1039,6 +1055,63 @@ class CustomPreviewFragment : Fragment() {
         fragmentBinding.zoomLevelText.text = displayLabelFor(zoomLevel)
     }
 
+
+    // ✅ 1) 물리 카메라별로 16:9 프리뷰 사이즈 선택
+    private fun pickPreviewSize16x9For(physicalId: String, klass: Class<*>): Size {
+        val ch = cameraManager.getCameraCharacteristics(physicalId)
+        val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return Size(1920, 1080)
+        val sizes = map.getOutputSizes(klass) ?: return Size(1920, 1080)
+
+        fun ar(s: Size) = s.width.toFloat() / s.height.toFloat()
+        val targetAR = 16f / 9f
+        
+        // 16:9 중 가장 큰 것 우선 (없으면 전체 중 16:9에 가장 가까운 것)
+        return sizes
+            .filter { kotlin.math.abs(ar(it) - targetAR) < 0.02f }
+            .maxByOrNull { it.width * it.height }
+            ?: sizes.minBy { kotlin.math.abs(ar(it) - targetAR) }
+    }
+
+    // ✅ 2) 센서 Active Array를 16:9로 센터-크롭
+    private fun cropActiveToAspect(active: android.graphics.Rect, targetAR: Float): android.graphics.Rect {
+        val curAR = active.width().toFloat() / active.height().toFloat()
+        val (w, h) = if (curAR > targetAR) {
+            // 현재가 더 넓음 → 높이 기준으로 너비 조정
+            val h = active.height()
+            val w = (h * targetAR).toInt()
+            w to h
+        } else {
+            // 현재가 더 좁음 → 너비 기준으로 높이 조정
+            val w = active.width()
+            val h = (w / targetAR).toInt()
+            w to h
+        }
+        val cx = active.centerX()
+        val cy = active.centerY()
+        val left = (cx - w / 2).coerceAtLeast(active.left)
+        val top = (cy - h / 2).coerceAtLeast(active.top)
+        val right = (left + w).coerceAtMost(active.right)
+        val bottom = (top + h).coerceAtMost(active.bottom)
+        return android.graphics.Rect(left, top, right, bottom)
+    }
+
+    // ✅ 센서에서 16:9로 센터-크롭 강제 적용
+    private fun apply16x9Crop(builder: CaptureRequest.Builder, forcePhysicalId: String?) {
+        val targetAR = 16f / 9f
+        if (forcePhysicalId.isNullOrEmpty()) {
+            val active = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+            val cropRect = cropActiveToAspect(active, targetAR)
+            builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+        } else {
+            // 물리 카메라 ID가 있으면 해당 물리 카메라의 센서 크기 사용
+            val physChars = cameraManager.getCameraCharacteristics(forcePhysicalId)
+            val active = physChars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+            val cropRect = cropActiveToAspect(active, targetAR)
+            // 세션 생성 시 setPhysicalCameraId로 라우팅했으므로 일반 set 사용
+            // 논리 카메라를 사용할 때는 setPhysicalCameraKey가 세션에 등록되지 않을 수 있음
+            builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+        }
+    }
 
     private fun applyZoomRatio(builder: CaptureRequest.Builder, ratio: Float) {
         val active = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
@@ -1271,7 +1344,7 @@ class CustomPreviewFragment : Fragment() {
         fragmentBinding.zoomSlider.progress = 0
         fragmentBinding.zoomLevelText.text = "1.00x"
 
-        // ★ 파이프라인 요청 대신, 우리가 만든 “1x 고정” 부트스트랩 요청으로 시작
+        // ★ 파이프라인 요청 대신, 우리가 만든 "1x 고정" 부트스트랩 요청으로 시작
         val bootstrap = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
             previewTargets.forEach { addTarget(it) }
             set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
@@ -1280,8 +1353,8 @@ class CustomPreviewFragment : Fragment() {
             // 필요 시 미리보기 안정화 옵션도 여기서 넣기 (기기별로 둘 중 하나)
             // set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)
 
-            // ★ 1x FOV을 “명시”
-            applyZoomRatio(this, 1.0f)
+            // ✅ 2) 센서에서 16:9로 센터-크롭 강제
+            apply16x9Crop(this, args.forcePhysicalId)
         }.build()
 
         session.setRepeatingRequest(bootstrap, null, cameraHandler)
@@ -1310,6 +1383,11 @@ class CustomPreviewFragment : Fragment() {
         originalencoder.start()
         cvRecordingStarted.open()
         pipeline.startRecording()
+        
+        // ✅ 동영상 촬영 시작 시에만 포즈 추론 시작 (발열 방지)
+        withContext(Dispatchers.Main) {
+            startPixelCopyLoop()
+        }
 
 
 
@@ -1662,15 +1740,13 @@ class CustomPreviewFragment : Fragment() {
 
         // 광각 버튼
         fragmentBinding.btnWide.setOnClickListener {
-            val widePhysicalId = getBackWidePhysicalId()
-            if (widePhysicalId == null) {
-                Toast.makeText(requireContext(), "광각 물리ID를 찾을 수 없습니다.", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            if (args.forcePhysicalId != widePhysicalId) {
-                reloadWithNewPipeline(args.cameraId, args.pipelineMode, widePhysicalId)
+            // ✅ LauncherFragment처럼 와이드로 전환할 때는 논리 카메라 사용 (forcePhysicalId = null)
+            // 망원에서 와이드로 돌아올 때는 논리 카메라로 전환하여 안정적인 상태 보장
+            if (args.forcePhysicalId != null) {
+                // 현재 물리 카메라를 사용 중이면 논리 카메라로 전환
+                reloadWithNewPipeline(args.cameraId, args.pipelineMode, null)
             } else {
+                // 이미 논리 카메라를 사용 중이면 줌만 조정
                 lensMode = LensMode.WIDE
                 startSmoothZoom(zoomLevel, 1.0f)
                 updateLensSelectorUI(false)
@@ -2036,28 +2112,114 @@ class CustomPreviewFragment : Fragment() {
         override fun onDraw(c: Canvas) { c.drawCircle(cx, cy, radius, p2); c.drawCircle(cx, cy, radius, p1) }
     }
 
+    /**
+     * LauncherFragment의 기본 설정값을 가져오는 헬퍼 함수
+     * 렌즈 변경 시 안정적인 파라미터 전달을 위해 사용
+     */
+    private fun getLauncherDefaults(): LauncherDefaults {
+        val context = requireContext()
+        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val selectedCameraId = cameraManager.cameraIdList.first()
+        val characteristics = cameraManager.getCameraCharacteristics(selectedCameraId)
+
+        val targetClass = MediaRecorder::class.java
+        val configMap = characteristics.get(
+            CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
+        ) ?: return LauncherDefaults()
+
+        val allSizes = configMap.getOutputSizes(targetClass)
+        val selectedSize = allSizes.firstOrNull { it.width == 3840 && it.height == 2160 }
+            ?: Size(4080, 3060)
+        val secondsPerFrame = configMap.getOutputMinFrameDuration(targetClass, selectedSize) / 1_000_000_000.0
+        val selectedFps = if (secondsPerFrame > 0) (1.0 / secondsPerFrame).toInt() else 30
+
+        val dynamicRange = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            if (capabilities?.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT) == true) {
+                val profiles = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES)
+                profiles?.getSupportedProfiles()?.firstOrNull() ?: DynamicRangeProfiles.STANDARD
+            } else {
+                DynamicRangeProfiles.STANDARD
+            }
+        } else {
+            DynamicRangeProfiles.STANDARD
+        }
+
+        val colorSpace = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val profiles = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_COLOR_SPACE_PROFILES)
+            profiles?.getSupportedColorSpacesForDynamicRange(android.graphics.ImageFormat.UNKNOWN, dynamicRange)?.firstOrNull()?.ordinal ?: ColorSpaceProfiles.UNSPECIFIED
+        } else {
+            ColorSpaceProfiles.UNSPECIFIED
+        }
+
+        val stabilizationModes = characteristics.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)
+        val supportsPreviewStabilization = stabilizationModes?.contains(CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION) == true
+
+        return LauncherDefaults(
+            cameraId = selectedCameraId,
+            width = selectedSize.width,
+            height = selectedSize.height,
+            fps = selectedFps,
+            dynamicRange = dynamicRange,
+            colorSpace = colorSpace,
+            previewStabilization = supportsPreviewStabilization,
+            useMediaRecorder = false,
+            videoCodec = 0,
+            filterOn = false,
+            transfer = 0,
+            useHardware = true,
+            pipelineMode = "hybrid"
+        )
+    }
+
+    /**
+     * LauncherFragment의 기본 설정값을 담는 데이터 클래스
+     */
+    private data class LauncherDefaults(
+        val cameraId: String = "",
+        val width: Int = 3840,
+        val height: Int = 2160,
+        val fps: Int = 30,
+        val dynamicRange: Long = DynamicRangeProfiles.STANDARD,
+        val colorSpace: Int = ColorSpaceProfiles.UNSPECIFIED,
+        val previewStabilization: Boolean = false,
+        val useMediaRecorder: Boolean = false,
+        val videoCodec: Int = 0,
+        val filterOn: Boolean = false,
+        val transfer: Int = 0,
+        val useHardware: Boolean = true,
+        val pipelineMode: String = "hybrid"
+    )
+
     fun reloadWithNewPipeline(
         newCameraId: String,
         mode: String,
         forcePhysicalId: String? = null
     ) {
+        // ✅ LauncherFragment의 기본값을 가져와서 사용 (안정적인 파라미터 전달)
+        val defaults = getLauncherDefaults()
+        
+        // ✅ LauncherFragment처럼 논리 카메라를 사용할 때는 기본값을 그대로 사용
+        // 물리 카메라를 사용할 때만 현재 args를 참조
+        val useDefaults = forcePhysicalId == null
+        
         val action = CustomPreviewFragmentDirections.actionSelfReloadWithMode(
             newCameraId,
-            args.width,
-            args.height,
-            args.fps,
-            args.dynamicRange,
-            args.colorSpace,
-            args.previewStabilization,
-            args.useMediaRecorder,
-            args.videoCodec,
-            args.filterOn,
-            args.transfer,
-            args.useHardware,
-            mode
+            if (useDefaults) defaults.width else (args.width.takeIf { it > 0 } ?: defaults.width),
+            if (useDefaults) defaults.height else (args.height.takeIf { it > 0 } ?: defaults.height),
+            if (useDefaults) defaults.fps else (args.fps.takeIf { it > 0 } ?: defaults.fps),
+            if (useDefaults) defaults.dynamicRange else (args.dynamicRange.takeIf { it != 0L } ?: defaults.dynamicRange),
+            if (useDefaults) defaults.colorSpace else (args.colorSpace.takeIf { it != ColorSpaceProfiles.UNSPECIFIED } ?: defaults.colorSpace),
+            if (useDefaults) defaults.previewStabilization else args.previewStabilization,
+            if (useDefaults) defaults.useMediaRecorder else args.useMediaRecorder,
+            if (useDefaults) defaults.videoCodec else args.videoCodec,
+            if (useDefaults) defaults.filterOn else args.filterOn,
+            if (useDefaults) defaults.transfer else args.transfer,
+            if (useDefaults) defaults.useHardware else args.useHardware,
+            mode.takeIf { it.isNotEmpty() } ?: defaults.pipelineMode
         ).apply {
             // 선택 인자는 setter로 주입해야 함
-            // (생성된 메서드가 setForcePhysicalId 또는 프로퍼티 할당일 수 있음)
+            // forcePhysicalId가 null이면 명시적으로 설정하지 않음 (논리 카메라 사용)
             forcePhysicalId?.let {
                 try { setForcePhysicalId(it) } catch (_: Throwable) { /* 일부 버전은 프로퍼티 형태 */ }
             }

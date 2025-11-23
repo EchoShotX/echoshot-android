@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.net.Uri
@@ -26,6 +28,7 @@ import android.widget.ProgressBar
 import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.widget.AppCompatImageView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -128,7 +131,20 @@ class GalleryFragment : Fragment() {
 
         glCtx = GlCtx()
 
-        binding.backIcon.setOnClickListener { findNavController().navigateUp() }
+        binding.backIcon.setOnClickListener { 
+            // ✅ 방법 1: 명시적으로 CustomPreviewFragment로 네비게이션하여 모든 파라미터 전달
+            navigateBackToCustomPreview()
+        }
+        
+        // 시스템 백 버튼도 처리
+        requireActivity().onBackPressedDispatcher.addCallback(
+            viewLifecycleOwner,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    navigateBackToCustomPreview()
+                }
+            }
+        )
 
         // 1) 초기 모드: 네비게이션 인자대로
         val startBasic = args.startBasic
@@ -219,32 +235,65 @@ class GalleryFragment : Fragment() {
     }
 
     private fun loadBasicItems(): List<ListItem> {
-        val result = mutableListOf<ListItem>()
-        val proj = arrayOf(
+        val result = mutableListOf<Pair<ListItem, Long>>() // 날짜순 정렬을 위해 Pair 사용
+        
+        // 동영상 쿼리
+        val videoProj = arrayOf(
             MediaStore.Video.Media._ID,
             MediaStore.Video.Media.DATE_TAKEN,
             MediaStore.Video.Media.DURATION,
             MediaStore.Video.Media.DATA
         )
-        val sel = "${MediaStore.Video.Media.DATA} LIKE ?"
-        val selArgs = arrayOf("%/DCIM/Camera2App/%")
-        val sort = "${MediaStore.Video.Media.DATE_TAKEN} DESC"
+        val videoSel = "${MediaStore.Video.Media.DATA} LIKE ?"
+        val videoSelArgs = arrayOf("%/DCIM/Camera2App/%")
+        val videoSort = "${MediaStore.Video.Media.DATE_TAKEN} DESC"
 
         requireContext().contentResolver.query(
             MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-            proj, sel, selArgs, sort
+            videoProj, videoSel, videoSelArgs, videoSort
         )?.use { c ->
             val idCol  = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+            val dateCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_TAKEN)
             val durCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
             while (c.moveToNext()) {
                 val id  = c.getLong(idCol)
                 val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
                 val dur = c.getLong(durCol)
+                val dateTaken = c.getLong(dateCol)
                 // 어댑터 재사용: uuid는 빈값, type은 임의(재생만 하면 되니까 "original")
-                result += ListItem.Video(uri = uri, durationMs = dur, uuid = "", type = "original")
+                result += Pair(ListItem.Video(uri = uri, durationMs = dur, uuid = "", type = "original"), dateTaken)
             }
         }
-        return result
+        
+        // 사진 쿼리 (DCIM/EchoShot 경로 포함)
+        val imageProj = arrayOf(
+            MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DATE_TAKEN,
+            MediaStore.Images.Media.DATA
+        )
+        val imageSel = "${MediaStore.Images.Media.DATA} LIKE ? OR ${MediaStore.Images.Media.DATA} LIKE ?"
+        val imageSelArgs = arrayOf("%/DCIM/Camera2App/%", "%/DCIM/EchoShot/%")
+        val imageSort = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
+
+        requireContext().contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            imageProj, imageSel, imageSelArgs, imageSort
+        )?.use { c ->
+            val idCol  = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            val dateCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_TAKEN)
+            while (c.moveToNext()) {
+                val id  = c.getLong(idCol)
+                val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                val dateTaken = c.getLong(dateCol)
+                // 사진은 durationMs를 0으로 설정 (어댑터에서 0이면 재생 시간 숨김)
+                result += Pair(ListItem.Video(uri = uri, durationMs = 0, uuid = "", type = "original"), dateTaken)
+            }
+        }
+        
+        // 날짜순으로 정렬 (최신순)
+        result.sortByDescending { it.second }
+        
+        return result.map { it.first }
     }
 
 
@@ -522,9 +571,15 @@ class GalleryFragment : Fragment() {
             fun bind(v: ListItem.Video) {
                 Glide.with(binding.root).load(v.uri).centerCrop().into(binding.thumbnailImageView)
 
-                val m = TimeUnit.MILLISECONDS.toMinutes(v.durationMs)
-                val s = TimeUnit.MILLISECONDS.toSeconds(v.durationMs) % 60
-                binding.tvPlayDuration.text = String.format("%02d:%02d", m, s)
+                // durationMs가 0이면 사진이므로 재생 시간 숨김
+                if (v.durationMs > 0) {
+                    val m = TimeUnit.MILLISECONDS.toMinutes(v.durationMs)
+                    val s = TimeUnit.MILLISECONDS.toSeconds(v.durationMs) % 60
+                    binding.tvPlayDuration.text = String.format("%02d:%02d", m, s)
+                    binding.tvPlayDuration.visibility = View.VISIBLE
+                } else {
+                    binding.tvPlayDuration.visibility = View.GONE
+                }
 
                 // ★ 2개 이상 cropped면 배지 보여주기 (cropped 칸만)
                 binding.badgeMulti.visibility =
@@ -628,6 +683,67 @@ class GalleryFragment : Fragment() {
                     )
                 }
             }
+        }
+    }
+    
+    /**
+     * 갤러리에서 원래 프래그먼트로 명시적으로 네비게이션
+     * 전면 카메라에서 온 경우 CustomFrontPreviewFragment로, 후면 카메라인 경우 CustomPreviewFragment로 복귀
+     * 모든 파라미터를 전달하여 안정적인 상태 복원 보장
+     */
+    private fun navigateBackToCustomPreview() {
+        // ✅ 카메라 ID를 확인하여 전면/후면 카메라 구분
+        val cameraManager = requireContext().getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val isFrontCamera = try {
+            val characteristics = cameraManager.getCameraCharacteristics(args.cameraId)
+            val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
+            lensFacing == CameraCharacteristics.LENS_FACING_FRONT
+        } catch (e: Exception) {
+            false // 오류 시 후면 카메라로 간주
+        }
+        
+        if (isFrontCamera) {
+            // 전면 카메라인 경우 CustomFrontPreviewFragment로 복귀
+            val action = GalleryFragmentDirections.actionGalleryFragmentToCustomFrontPreviewFragment(
+                args.cameraId,
+                args.width,
+                args.height,
+                args.fps,
+                args.dynamicRange,
+                args.colorSpace,
+                args.previewStabilization,
+                args.useMediaRecorder,
+                args.videoCodec,
+                args.filterOn,
+                args.transfer,
+                args.useHardware,
+                args.pipelineMode
+            ).apply {
+                // forcePhysicalId는 nullable이므로 setter로 설정
+                args.forcePhysicalId?.let { setForcePhysicalId(it) }
+            }
+            findNavController().navigate(action)
+        } else {
+            // 후면 카메라인 경우 CustomPreviewFragment로 복귀
+            val action = GalleryFragmentDirections.actionGalleryFragmentToCustomPreviewFragment(
+                args.cameraId,
+                args.width,
+                args.height,
+                args.fps,
+                args.dynamicRange,
+                args.colorSpace,
+                args.previewStabilization,
+                args.useMediaRecorder,
+                args.videoCodec,
+                args.filterOn,
+                args.transfer,
+                args.useHardware,
+                args.pipelineMode
+            ).apply {
+                // forcePhysicalId는 nullable이므로 setter로 설정
+                args.forcePhysicalId?.let { setForcePhysicalId(it) }
+            }
+            findNavController().navigate(action)
         }
     }
 }
