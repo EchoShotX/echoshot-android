@@ -714,6 +714,12 @@
                 android:name="videoUri"
                 app:argType="string" />
         </action>
+        <action
+            android:id="@+id/action_galleryFragment_to_customPreviewFragment"
+            app:destination="@id/custom_preview_fragment" />
+        <action
+            android:id="@+id/action_galleryFragment_to_customFrontPreviewFragment"
+            app:destination="@id/custom_front_preview_fragment" />
     </fragment>
     <fragment
         android:id="@+id/previewPlayerFragment"
