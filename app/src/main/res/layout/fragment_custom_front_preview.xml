@@ -73,7 +73,7 @@
         android:layout_width="match_parent"
         android:layout_height="48dp"
         android:layout_gravity="bottom"
-        android:layout_marginBottom="112dp"
+        android:layout_marginBottom="122dp"
         android:paddingStart="24dp"
         android:paddingEnd="24dp"
         android:orientation="horizontal"
@@ -98,7 +98,7 @@
                 android:text="사진"
                 android:textStyle="bold"
                 android:textColor="@android:color/white"
-                android:background="@drawable/mode_chip_inactive" />
+                android:background="@android:color/transparent" />
 
         </FrameLayout>
 
@@ -120,7 +120,7 @@
                 android:text="동영상"
                 android:textStyle="bold"
                 android:textColor="@android:color/white"
-                android:background="@drawable/mode_chip_active" />
+                android:background="@android:color/transparent" />
 
         </FrameLayout>
 
@@ -137,7 +137,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="24dp"
+        android:layout_marginBottom="68dp"
         android:orientation="horizontal"
         android:gravity="center">
 
@@ -145,7 +145,7 @@
             android:id="@+id/gallery_button"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:layout_marginEnd="32dp"
+            android:layout_marginEnd="60dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:scaleType="centerCrop"
             android:clickable="true"
@@ -153,8 +153,8 @@
 
         <ImageButton
             android:id="@+id/capture_button"
-            android:layout_width="96dp"
-            android:layout_height="96dp"
+            android:layout_width="60dp"
+            android:layout_height="60dp"
             android:scaleType="fitCenter"
             android:background="@drawable/ic_shutter"
             app:tint="@android:color/holo_red_dark"
@@ -164,7 +164,7 @@
             android:id="@+id/switch_camera_button"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:layout_marginStart="32dp"
+            android:layout_marginStart="60dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:padding="4dp"
             android:src="@drawable/ic_camera_switch"
@@ -177,7 +177,7 @@
             android:id="@+id/switch_camera_placeholder"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:layout_marginStart="32dp"
+            android:layout_marginStart="60dp"
             android:visibility="gone" />
     </LinearLayout>
 
@@ -187,8 +187,16 @@
         android:layout_width="96dp"
         android:layout_height="96dp"
         android:layout_gravity="bottom|right"
+        android:layout_marginBottom="68dp"
         android:textColor="@android:color/holo_red_light"
         android:scaleType="fitCenter"
         android:visibility="gone" />
 
+    <!-- 하단 네비게이션 바 -->
+    <include
+        layout="@layout/bottom_navigation_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginBottom="13dp" />
 </FrameLayout>

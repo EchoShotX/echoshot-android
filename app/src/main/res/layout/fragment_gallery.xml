@@ -32,15 +32,21 @@
             android:layout_marginStart="12dp" />
     </LinearLayout>
 
-    <!-- 📸 썸네일 목록 -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/galleryRecyclerView"
+    <!-- 📸 썸네일 목록 (SwipeRefreshLayout으로 감싸기) -->
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipeRefreshLayout"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:padding="4dp"
-        android:clipToPadding="false"
-        android:scrollbars="vertical" />
+        android:layout_weight="1">
+        
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/galleryRecyclerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="4dp"
+            android:clipToPadding="false"
+            android:scrollbars="vertical" />
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
     <!-- 하단 탭 버튼 -->
     <LinearLayout
@@ -75,5 +81,12 @@
             android:backgroundTint="@android:color/transparent"
             android:strokeColor="#888888" />
     </LinearLayout>
+
+    <!-- 하단 네비게이션 바 -->
+    <include
+        layout="@layout/bottom_navigation_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="13dp" />
 
 </LinearLayout>
