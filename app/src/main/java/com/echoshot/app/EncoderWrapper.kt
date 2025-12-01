@@ -1,18 +1,4 @@
-/*
- * Copyright 2022 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License")
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+
 
 package com.echoshot.app
 
@@ -60,6 +46,7 @@ class EncoderWrapper(private val name: String,
         private const val AUDIO_CHANNEL_COUNT = 1 // 모노
         private const val AUDIO_BIT_RATE = 64000 // 64kbps
         private const val AUDIO_MIME_TYPE = "audio/mp4a-latm" // AAC
+        
     }
 
     private val mWidth = width
@@ -84,7 +71,7 @@ class EncoderWrapper(private val name: String,
         if (useMediaRecorder) {
             null
         } else {
-            EncoderThread(name, mEncoder!!, outputFile, mOrientationHint, frameEncodedListener, mAudioEncoder, mAudioRecord)
+            EncoderThread(name, mEncoder!!, outputFile, mOrientationHint, frameEncodedListener, mAudioEncoder, mAudioRecord, mFrameRate)
         }
     }
 
@@ -476,7 +463,8 @@ class EncoderWrapper(private val name: String,
                                 orientationHint: Int,
                                 private var listener: OnFrameEncodedListener?,
                                 private val audioEncoder: MediaCodec?,
-                                private val audioRecord: AudioRecord?
+                                private val audioRecord: AudioRecord?,
+                                private val frameRate: Int
                             ): Thread() {
         val mEncoder = mediaCodec
         var mEncodedFormat: MediaFormat? = null
@@ -497,6 +485,9 @@ class EncoderWrapper(private val name: String,
         private val AUDIO_SAMPLE_RATE = 44100L // 샘플레이트
         @Volatile
         private var mFirstVideoTimestamp: Long = -1 // 첫 비디오 프레임 타임스탬프 (오디오 동기화용)
+        private var mLastVideoPtsUs: Long = -1L // 마지막 비디오 PTS (단조증가 보정용)
+        private val mFrameDurUs: Long = 1_000_000L / frameRate.coerceAtLeast(1) // 프레임 간격 (마이크로초)
+        private var mVideoFrameIndex: Long = 0L // 비디오 프레임 인덱스 (CFR 강제용)
 
         var mHandler: EncoderHandler? = null
         var mFrameNum: Int = 0
@@ -803,7 +794,9 @@ class EncoderWrapper(private val name: String,
                                 
                                 // ✅ 첫 비디오 프레임 타임스탬프 저장 (오디오 동기화용)
                                 mFirstVideoTimestamp = mBufferInfo.presentationTimeUs
-                                Log.d(TAG, "🎬 [$name] 첫 비디오 타임스탬프: $mFirstVideoTimestamp")
+                                // ✅ CFR 강제를 위해 프레임 인덱스 초기화
+                                mVideoFrameIndex = 0L
+                                Log.d(TAG, "🎬 [$name] 첫 비디오 타임스탬프: $mFirstVideoTimestamp, CFR 모드 시작 (frameRate=$frameRate, frameDur=${mFrameDurUs}us)")
                                 
                                 // 오디오 트랙이 이미 준비되어 있으면 함께 추가
                                 if (mAudioFormat != null && mAudioTrack == -1) {
@@ -818,23 +811,42 @@ class EncoderWrapper(private val name: String,
 
                         synchronized(mMuxer) {
                             if (mVideoTrack != -1) {
-                                // ✅ 비디오 타임스탬프를 0부터 시작하도록 정규화
-                                val normalizedVideoTimestamp = if (mFirstVideoTimestamp >= 0) {
-                                    mBufferInfo.presentationTimeUs - mFirstVideoTimestamp
-                                } else {
-                                    mBufferInfo.presentationTimeUs
+                                // ✅ CFR 강제: 프레임 인덱스 기반으로 고정 PTS 생성 (raw PTS 무시)
+                                // 이렇게 하면 두 인코더 모두 동일한 프레임 간격을 가짐
+                                var ptsUs = mVideoFrameIndex * mFrameDurUs
+                                
+                                // ✅ 단조증가 안전장치 (동일/역전 방지, 거의 안 걸리지만 안전장치)
+                                if (ptsUs <= mLastVideoPtsUs) {
+                                    ptsUs = mLastVideoPtsUs + mFrameDurUs
+                                    Log.w(TAG, "⚠️ [$name] PTS 단조증가 보정: $ptsUs (last=$mLastVideoPtsUs)")
                                 }
                                 
-                                val normalizedVideoBufferInfo = MediaCodec.BufferInfo().apply {
+                                // ✅ PTS 로깅 (문제 진단용 - 처음 30프레임 + 마지막 프레임)
+                                if (mFrameNum < 30 || (mBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                    Log.d(TAG, "📊 [$name] PTS: raw=${mBufferInfo.presentationTimeUs}, CFR=$ptsUs (frameIdx=$mVideoFrameIndex), last=$mLastVideoPtsUs")
+                                }
+                                
+                                val fixedBufferInfo = MediaCodec.BufferInfo().apply {
                                     set(
                                         mBufferInfo.offset,
                                         mBufferInfo.size,
-                                        normalizedVideoTimestamp,
+                                        ptsUs,
                                         mBufferInfo.flags
                                     )
                                 }
                                 
-                                mMuxer.writeSampleData(mVideoTrack, encodedData, normalizedVideoBufferInfo)
+                                mMuxer.writeSampleData(mVideoTrack, encodedData, fixedBufferInfo)
+                                
+                                // 프레임 인덱스 및 마지막 PTS 업데이트
+                                mVideoFrameIndex++
+                                mLastVideoPtsUs = ptsUs
+                                
+                                // ✅ 마지막 프레임 PTS 로깅 (두 동영상 길이 비교용)
+                                if ((mBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                    val durationSec = ptsUs / 1_000_000.0
+                                    val expectedFps = mVideoFrameIndex / durationSec
+                                    Log.d(TAG, "🏁 [$name] 마지막 프레임: CFR PTS=$ptsUs, duration=${String.format("%.2f", durationSec)}초, frames=$mVideoFrameIndex, fps=${String.format("%.2f", expectedFps)}")
+                                }
                             }
                         }
 

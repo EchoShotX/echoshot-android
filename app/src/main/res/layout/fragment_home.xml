@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FFFFFF">
+
+    <!-- 상단 로고 -->
+    <ImageView
+        android:id="@+id/logo_home"
+        android:layout_width="300dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="150dp"
+        android:padding="0dp"
+        android:src="@drawable/ic_echoshot_logo_home"
+        android:contentDescription="EchoShot Logo"
+        android:scaleType="fitCenter"
+        android:adjustViewBounds="true" />
+
+    <!-- 촬영하기 박스 -->
+    <LinearLayout
+        android:id="@+id/shoot_box"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="100dp"
+        android:layout_marginHorizontal="24dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#1A000000"
+        android:padding="20dp"
+        android:clickable="true"
+        android:focusable="true">
+
+        <ImageView
+            android:id="@+id/camera_icon_box"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_photo_camera"
+            android:contentDescription="카메라"
+            app:tint="#000000"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:id="@+id/shoot_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="16dp"
+            android:text="촬영하기"
+            android:textColor="#000000"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/arrow_back"
+            android:contentDescription="이동"
+            app:tint="#000000"
+            android:rotation="180"
+            android:scaleType="fitCenter" />
+    </LinearLayout>
+
+
+
+    <!-- 빠른 사용 가이드 박스 -->
+    <LinearLayout
+        android:id="@+id/guide_box"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="40dp"
+        android:layout_marginHorizontal="24dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#1A000000"
+        android:padding="20dp"
+        android:clickable="true"
+        android:focusable="true">
+
+        <ImageView
+            android:id="@+id/guide_icon_box"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_menu_book"
+            android:contentDescription="가이드"
+            app:tint="#000000"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:id="@+id/guide_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="16dp"
+            android:text="빠른 사용 가이드"
+            android:textColor="#000000"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/arrow_back"
+            android:contentDescription="이동"
+            app:tint="#000000"
+            android:rotation="180"
+            android:scaleType="fitCenter" />
+    </LinearLayout>
+
+    <!-- 가이드 내용 (나중에 추가 가능) -->
+    <LinearLayout
+        android:id="@+id/guide_content"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="16dp"
+        android:layout_marginHorizontal="24dp"
+        android:orientation="vertical">
+        
+        <!-- 가이드 아이템들은 나중에 추가 -->
+    </LinearLayout>
+
+    <!-- 하단 네비게이션 바 -->
+    <include
+        layout="@layout/bottom_navigation_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="13dp" />
+
+</LinearLayout>
+

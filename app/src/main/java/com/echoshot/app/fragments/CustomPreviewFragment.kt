@@ -58,6 +58,7 @@ import androidx.navigation.NavController
 import androidx.navigation.Navigation
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
+import com.echoshot.app.utils.setupBottomNavigationBar
 import com.example.android.camera.utils.getPreviewOutputSize
 import com.echoshot.app.BuildConfig
 import com.echoshot.app.CameraActivity
@@ -83,6 +84,7 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.Executor
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
@@ -165,6 +167,9 @@ class CustomPreviewFragment : Fragment() {
     private var aeCompRange: Range<Int>? = null
     private var aeCompStep: Rational? = null
     private var currentAeComp: Int = 0
+
+    // ✅ 포즈 오버레이 표시/숨김 제어 (기본값: false = 숨김)
+    private var showPoseOverlay = false
 
     private fun dp(v: Int) = (resources.displayMetrics.density * v + 0.5f).toInt()
     // 줌 핀처
@@ -278,6 +283,15 @@ class CustomPreviewFragment : Fragment() {
 
     @Volatile
     private var recordingComplete = false
+
+    // ✅ 중복 호출 방지를 위한 원자 플래그
+    private val isRecording = AtomicBoolean(false)
+    private val isStopping = AtomicBoolean(false)
+    
+    // ✅ 버튼 디바운스용
+    @Volatile
+    private var lastStopClick = 0L
+    private val STOP_DEBOUNCE_MS = 600L
 
     /** Condition variable for blocking until the recording completes */
     private val cvRecordingStarted = ConditionVariable(false)
@@ -424,10 +438,12 @@ class CustomPreviewFragment : Fragment() {
 
         requireActivity().runOnUiThread {
             _fragmentBinding?.let { binding ->
-                // 1) 오버레이 갱신
-                fragmentBinding.poseOverlayView.apply {
-                    people = peopleWithBox
-                    invalidate()
+                // 1) 오버레이 갱신 (표시 상태일 때만)
+                if (showPoseOverlay) {
+                    fragmentBinding.poseOverlayView.apply {
+                        people = peopleWithBox
+                        invalidate()
+                    }
                 }
 
                 // Linear Interpolation 으로 Zoom 보간
@@ -599,6 +615,8 @@ class CustomPreviewFragment : Fragment() {
             set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
             set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, clamped)
             // (필요 시 AF/AWB 모드도 유지)
+            // ✅ 망원 렌즈 비율 유지를 위해 16:9 크롭 적용
+            apply16x9Crop(this, args.forcePhysicalId)
         }
         session.setRepeatingRequest(builder.build(), null, cameraHandler)
 
@@ -637,6 +655,38 @@ class CustomPreviewFragment : Fragment() {
     @SuppressLint("MissingPermission")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // 네비게이션 바 설정
+        setupBottomNavigationBar(
+            currentPage = "camera",
+            onHomeClick = {
+                // 카메라에서 홈으로 이동
+                val action = CustomPreviewFragmentDirections.actionCustomPreviewFragmentToHomeFragment()
+                findNavController().navigate(action)
+            },
+            onGalleryClick = {
+                // 카메라에서 갤러리로 이동
+                val action = CustomPreviewFragmentDirections
+                    .actionCustomPreviewFragmentToGalleryFragment(
+                        args.cameraId,
+                        args.width,
+                        args.height,
+                        args.fps,
+                        args.dynamicRange,
+                        args.colorSpace,
+                        args.previewStabilization,
+                        args.useMediaRecorder,
+                        args.videoCodec,
+                        args.filterOn,
+                        args.transfer,
+                        args.useHardware,
+                        args.pipelineMode
+                    ).apply {
+                        startBasic = false   // 확장 갤러리 탭을 기본 활성화
+                    }
+                findNavController().navigate(action)
+            }
+        )
 
         updateGalleryThumbnail()
 
@@ -846,7 +896,17 @@ class CustomPreviewFragment : Fragment() {
                 Toast.makeText(requireContext(), "녹화 시작", Toast.LENGTH_SHORT).show()
                 Log.d(TAG, "녹화 시작")
             } else {
-                stopRecording()
+                // ✅ 디바운스: 짧은 시간 내 중복 클릭 방지
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastStopClick < STOP_DEBOUNCE_MS) {
+                    Log.d(TAG, "⏱️ 디바운스: 중복 클릭 무시")
+                    return@setOnClickListener
+                }
+                lastStopClick = now
+                
+                lifecycleScope.launch {
+                    stopRecording()
+                }
                 Toast.makeText(requireContext(), "녹화 중지 시도", Toast.LENGTH_SHORT).show()
                 Log.d(TAG, "녹화 중지 시도")
             }
@@ -1053,6 +1113,15 @@ class CustomPreviewFragment : Fragment() {
         //줌 슬라이터 값 변경
         lensMode = if (isTeleCurrent()) LensMode.TELE else LensMode.WIDE
         fragmentBinding.zoomLevelText.text = displayLabelFor(zoomLevel)
+
+        // ✅ 포즈 오버레이 기본값: 숨김
+        fragmentBinding.poseOverlayView.visibility = View.GONE
+
+        // ✅ 설정 버튼 클릭 시 포즈 오버레이 토글
+        fragmentBinding.iconSetting.setOnClickListener {
+            showPoseOverlay = !showPoseOverlay
+            fragmentBinding.poseOverlayView.visibility = if (showPoseOverlay) View.VISIBLE else View.GONE
+        }
     }
 
 
@@ -1216,22 +1285,45 @@ class CustomPreviewFragment : Fragment() {
             set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(metering))
             // 필요 시 AWB도 동일하게
             // set(CaptureRequest.CONTROL_AWB_REGIONS, arrayOf(metering))
-            // 물리카메라 강제 사용 중이면 per-physical key도 고려(주석 참조)
+            // ✅ 망원 렌즈 비율 유지를 위해 16:9 크롭 적용
+            apply16x9Crop(this, args.forcePhysicalId)
         }
 
-        session.stopRepeating()
-        session.capture(builder.build(), object : CameraCaptureSession.CaptureCallback() {
-            override fun onCaptureCompleted(
-                session: CameraCaptureSession,
-                request: CaptureRequest,
-                result: TotalCaptureResult
-            ) {
-                cameraHandler.postDelayed({
-                    val preview = previewRequest ?: request
-                    session.setRepeatingRequest(preview, null, cameraHandler)
-                }, 50)
-            }
-        }, cameraHandler)
+        // ✅ 세션 상태 확인 후 안전하게 호출
+        if (isSessionClosed(session)) {
+            Log.w(TAG, "⚠️ triggerFocusAtPoint: 세션이 이미 닫혔습니다")
+            return
+        }
+        
+        runCatching {
+            session.stopRepeating()
+        }.onFailure { e ->
+            Log.w(TAG, "⚠️ triggerFocusAtPoint에서 stopRepeating() 실패: ${e.message}")
+            return
+        }
+        
+        runCatching {
+            session.capture(builder.build(), object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    result: TotalCaptureResult
+                ) {
+                    cameraHandler.postDelayed({
+                        val preview = previewRequest ?: request
+                        runCatching {
+                            if (!isSessionClosed(session)) {
+                                session.setRepeatingRequest(preview, null, cameraHandler)
+                            }
+                        }.onFailure { e ->
+                            Log.w(TAG, "⚠️ setRepeatingRequest() 실패: ${e.message}")
+                        }
+                    }, 50)
+                }
+            }, cameraHandler)
+        }.onFailure { e ->
+            Log.w(TAG, "⚠️ triggerFocusAtPoint에서 capture() 실패: ${e.message}")
+        }
     }
 
     /** 뷰 안에서 프리뷰 버퍼가 차지하는 '콘텐츠 사각형'(레터/필러 박스 보정용)을 구한다 */
@@ -1279,6 +1371,21 @@ class CustomPreviewFragment : Fragment() {
 
     private fun isCurrentlyRecording(): Boolean {
         return recordingStarted && !recordingComplete
+    }
+
+    // ✅ 세션 닫힘 상태 확인 헬퍼 함수
+    private fun isSessionClosed(session: CameraCaptureSession): Boolean {
+        return try {
+            // device 속성에 접근 시도: 닫혔으면 IllegalStateException 발생
+            session.device
+            false
+        } catch (e: IllegalStateException) {
+            true
+        } catch (e: Exception) {
+            // 다른 예외는 닫힌 것으로 간주
+            Log.w(TAG, "⚠️ 세션 상태 확인 중 예외: ${e.message}")
+            true
+        }
     }
 
     private fun createEncoder(name: String): EncoderWrapper {
@@ -1365,7 +1472,12 @@ class CustomPreviewFragment : Fragment() {
 
 
     private fun startRecording() = lifecycleScope.launch(Dispatchers.IO) {
-
+        // ✅ 중복 시작 방지
+        if (isRecording.getAndSet(true)) {
+            Log.w(TAG, "⚠️ 녹화가 이미 시작되었습니다. 중복 호출 무시")
+            return@launch
+        }
+        isStopping.set(false)
 
         requireActivity().requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
         pipeline.actionDown(encoderSurface,originalencoderSurface)
@@ -1434,111 +1546,154 @@ class CustomPreviewFragment : Fragment() {
     private fun stopRecording() = lifecycleScope.launch(Dispatchers.IO) {
         Log.d("RenderHandler", "🛑 stopRecording() 호출됨")
 
-        pixelHandler.removeCallbacks(pixelRunnable)
-        pixelThread.quitSafely()
+        // ✅ 재진입 방지: 이미 정지 중이면 무시
+        if (!isRecording.get() || !isStopping.compareAndSet(false, true)) {
+            Log.w(TAG, "⚠️ stopRecording() 중복 호출 무시 (이미 정지 중이거나 녹화 중이 아님)")
+            return@launch
+        }
 
-        // 1. 녹화 시작 플래그 대기 및 첫 프레임 처리 보장
-        cvRecordingStarted.block()
-        encoder.waitForFirstFrame()
-        originalencoder.waitForFirstFrame()
-
-        // 2. 세션 중지 및 종료
+        // ✅ UI에서 중복 클릭 방지
         withContext(Dispatchers.Main) {
-            session.stopRepeating()
-            session.close()
+            fragmentBinding.captureButton.isEnabled = false
         }
 
-        // 3. 프레임 리스너 제거
-        pipeline.clearFrameListener()
+        try {
+            pixelHandler.removeCallbacks(pixelRunnable)
+            pixelThread.quitSafely()
 
-        // 4. UI 업데이트
-        fragmentBinding.captureButton.post {
-            fragmentBinding.captureButton.background =
-                ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_normal)
-            fragmentBinding.captureTimer?.visibility = View.GONE
-            fragmentBinding.captureTimer?.stop()
-            fragmentBinding.captureButton.setOnTouchListener(null)
-        }
+            // 1. 녹화 시작 플래그 대기 및 첫 프레임 처리 보장
+            cvRecordingStarted.block()
+            encoder.waitForFirstFrame()
+            originalencoder.waitForFirstFrame()
 
-        // 5. 세션 종료 대기
-        cvRecordingComplete.block()
+            // 2. 세션 중지 및 종료 (안전하게)
+            withContext(Dispatchers.Main) {
+                // ✅ 세션 유효성 검사 및 예외 무해화
+                runCatching {
+                    if (::session.isInitialized && !isSessionClosed(session)) {
+                        session.stopRepeating()
+                    }
+                }.onFailure { e ->
+                    Log.w(TAG, "⚠️ stopRepeating() 실패 (무해화): ${e.message}")
+                }
 
-        // 6. 화면 회전 복원
-        requireActivity().requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                runCatching {
+                    if (::session.isInitialized && !isSessionClosed(session)) {
+                        session.abortCaptures()
+                    }
+                }.onFailure { e ->
+                    Log.w(TAG, "⚠️ abortCaptures() 실패 (무해화): ${e.message}")
+                }
 
-        // 7. 최소 녹화 시간 보장
-        val elapsed = System.currentTimeMillis() - recordingStartMillis
-        Log.d(TAG, "🕒 최소 녹화 시간 보장 시작 (elapsed=${elapsed})")
-        if (elapsed < MIN_REQUIRED_RECORDING_TIME_MILLIS) {
-            delay(MIN_REQUIRED_RECORDING_TIME_MILLIS - elapsed)
-        }
-        Log.d(TAG, "🕒 최소 녹화 시간 보장 완료")
-
-        delay(CameraActivity.ANIMATION_SLOW_MILLIS)
-
-        // 8. 파이프라인 정리
-        Log.d(TAG, "🧹 pipeline.cleanup() 호출 직전")
-        pipeline.cleanup()
-        Log.d(TAG, "✅ pipeline.cleanup() 호출 완료")
-
-
-        // 9. 인코더 shutdown (동기적으로 안전하게 수행)
-        originalencoder.shutdown()
-        encoder.shutdown()
-
-        // 🔟 shutdown 이후 MediaScanner에 등록 (갤러리 표시용)
-        val outputFiles = listOf(encoder.outputFile, originalencoder.outputFile)
-        MediaScannerConnection.scanFile(
-            requireContext(),
-            outputFiles.map { it.absolutePath }.toTypedArray(),
-            null,
-            null
-        )
-        Log.d(TAG, "✅ 모든 비디오 파일이 MediaScanner에 등록되었습니다.")
-
-        // — 로그 플러시 & 스트림 닫기
-        synchronized(this@CustomPreviewFragment) {
-            if (this@CustomPreviewFragment::logWriter.isInitialized) {
-                logWriter.flush()
-                logWriter.close()
-                Log.d(TAG, "📄 Tracking log saved to Downloads/Camera2App")
+                // ✅ 세션 닫기 (한 번만)
+                runCatching {
+                    if (::session.isInitialized && !isSessionClosed(session)) {
+                        session.close()
+                    }
+                }.onFailure { e ->
+                    Log.w(TAG, "⚠️ session.close() 실패 (무해화): ${e.message}")
+                }
             }
-        }
 
-        // 프레임 타임스탬프 저장 (Downloads/Camera2App에 MediaStore로 등록)
-        val gson = com.google.gson.GsonBuilder().setPrettyPrinting().create()
-        val jsonArray = gson.toJson(frameTimestamps)
-        val tsPrefix = "tracking_log_${sessionUuid}_frame_ts"
-        val tsUri = createLogUri(requireContext(), tsPrefix)
-        if (tsUri != null) {
-            requireContext().contentResolver.openOutputStream(tsUri)?.use { os ->
-                os.write(jsonArray.toByteArray())
-            } ?: Log.e(TAG, "타임스탬프 스트림 획득 실패")
-            Log.d(TAG, "📄 Frame timestamps saved: $tsUri")
-        } else {
-            Log.e(TAG, "MediaStore에 타임스탬프 파일 등록 실패")
-        }
+            // 3. 프레임 리스너 제거
+            pipeline.clearFrameListener()
 
-
-        // 10. 상태 플래그 업데이트 + 버튼 복구는 메인에서
-        withContext(Dispatchers.Main) {
-            recordingStarted = false
-            // 🔥 상단 우측 버튼을 '전면 전환' 모드로 복귀
-            updateTopRightButton()
-
-            // 📸 갤러리 버튼을 원래대로 복원
-            galleryButtonOriginalDrawable?.let {
-                fragmentBinding.galleryButton.setImageDrawable(it)
-            } ?: run {
-                updateGalleryThumbnail()  // 원래 drawable이 없으면 썸네일 다시 설정
+            // 4. UI 업데이트
+            fragmentBinding.captureButton.post {
+                fragmentBinding.captureButton.background =
+                    ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_normal)
+                fragmentBinding.captureTimer?.visibility = View.GONE
+                fragmentBinding.captureTimer?.stop()
+                fragmentBinding.captureButton.setOnTouchListener(null)
             }
-            galleryButtonOriginalClickListener?.let {
-                fragmentBinding.galleryButton.setOnClickListener(it)
+
+            // 5. 세션 종료 대기
+            cvRecordingComplete.block()
+
+            // 6. 화면 회전 복원
+            requireActivity().requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+
+            // 7. 최소 녹화 시간 보장
+            val elapsed = System.currentTimeMillis() - recordingStartMillis
+            Log.d(TAG, "🕒 최소 녹화 시간 보장 시작 (elapsed=${elapsed})")
+            if (elapsed < MIN_REQUIRED_RECORDING_TIME_MILLIS) {
+                delay(MIN_REQUIRED_RECORDING_TIME_MILLIS - elapsed)
             }
-            
-            // 🎥 녹화 종료 시 렌즈 선택 버튼과 사진 모드 버튼 다시 보이기
-            fragmentBinding.lensSelector.visibility = View.VISIBLE
-            requireView().findViewById<View>(R.id.btn_mode_photo)?.visibility = View.VISIBLE
+            Log.d(TAG, "🕒 최소 녹화 시간 보장 완료")
+
+            delay(CameraActivity.ANIMATION_SLOW_MILLIS)
+
+            // 8. 파이프라인 정리
+            Log.d(TAG, "🧹 pipeline.cleanup() 호출 직전")
+            pipeline.cleanup()
+            Log.d(TAG, "✅ pipeline.cleanup() 호출 완료")
+
+
+            // 9. 인코더 shutdown (동기적으로 안전하게 수행)
+            originalencoder.shutdown()
+            encoder.shutdown()
+
+            // 🔟 shutdown 이후 MediaScanner에 등록 (갤러리 표시용)
+            val outputFiles = listOf(encoder.outputFile, originalencoder.outputFile)
+            MediaScannerConnection.scanFile(
+                requireContext(),
+                outputFiles.map { it.absolutePath }.toTypedArray(),
+                null,
+                null
+            )
+            Log.d(TAG, "✅ 모든 비디오 파일이 MediaScanner에 등록되었습니다.")
+
+            // — 로그 플러시 & 스트림 닫기
+            synchronized(this@CustomPreviewFragment) {
+                if (this@CustomPreviewFragment::logWriter.isInitialized) {
+                    logWriter.flush()
+                    logWriter.close()
+                    Log.d(TAG, "📄 Tracking log saved to Downloads/Camera2App")
+                }
+            }
+
+            // 프레임 타임스탬프 저장 (Downloads/Camera2App에 MediaStore로 등록)
+            val gson = com.google.gson.GsonBuilder().setPrettyPrinting().create()
+            val jsonArray = gson.toJson(frameTimestamps)
+            val tsPrefix = "tracking_log_${sessionUuid}_frame_ts"
+            val tsUri = createLogUri(requireContext(), tsPrefix)
+            if (tsUri != null) {
+                requireContext().contentResolver.openOutputStream(tsUri)?.use { os ->
+                    os.write(jsonArray.toByteArray())
+                } ?: Log.e(TAG, "타임스탬프 스트림 획득 실패")
+                Log.d(TAG, "📄 Frame timestamps saved: $tsUri")
+            } else {
+                Log.e(TAG, "MediaStore에 타임스탬프 파일 등록 실패")
+            }
+
+
+            // 10. 상태 플래그 업데이트 + 버튼 복구는 메인에서
+            withContext(Dispatchers.Main) {
+                recordingStarted = false
+                // 🔥 상단 우측 버튼을 '전면 전환' 모드로 복귀
+                updateTopRightButton()
+
+                // 📸 갤러리 버튼을 원래대로 복원
+                galleryButtonOriginalDrawable?.let {
+                    fragmentBinding.galleryButton.setImageDrawable(it)
+                } ?: run {
+                    updateGalleryThumbnail()  // 원래 drawable이 없으면 썸네일 다시 설정
+                }
+                galleryButtonOriginalClickListener?.let {
+                    fragmentBinding.galleryButton.setOnClickListener(it)
+                }
+                
+                // 🎥 녹화 종료 시 렌즈 선택 버튼과 사진 모드 버튼 다시 보이기
+                fragmentBinding.lensSelector.visibility = View.VISIBLE
+                requireView().findViewById<View>(R.id.btn_mode_photo)?.visibility = View.VISIBLE
+            }
+        } finally {
+            // ✅ 항상 플래그 리셋 및 UI 복구
+            isRecording.set(false)
+            isStopping.set(false)
+            withContext(Dispatchers.Main) {
+                fragmentBinding.captureButton.isEnabled = true
+            }
         }
 
         // 11. UI 화면 복귀는 무조건 메인스레드에서 안전하게 실행
@@ -1878,6 +2033,8 @@ class CustomPreviewFragment : Fragment() {
 
             override fun onClosed(session: CameraCaptureSession) {
                 Log.d(TAG, "🎬 Session closed callback 진입")
+                // ✅ 세션 조작 금지: onClosed에서는 세션에 대한 조작을 하지 않음
+                // 플래그만 설정하고 파이프라인 정리
                 if (!recordingCompleteOnClose || !isCurrentlyRecording()) {
                     Log.w(TAG, "⚠️ 조건 불충족 - open() 호출 생략됨")
                     return

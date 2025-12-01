@@ -1,5 +1,6 @@
 package com.echoshot.app.ui
 
+import android.util.Log
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import kotlin.math.ln
@@ -16,12 +17,35 @@ class ZoomRulerAdapter(
     private val minRightTicks: Int = 0
 ) : RecyclerView.Adapter<ZoomRulerAdapter.VH>() {
 
-    private val logSpanLeft  = ln((midZoom / minZoom).toDouble())
-    private val logSpanRight = ln((maxZoom / midZoom).toDouble())
+    // 안전한 초기화: NaN 방어
+    private val safeMinZoom = if (minZoom.isNaN() || minZoom <= 0f) 1f else minZoom
+    private val safeMidZoom = if (midZoom.isNaN() || midZoom <= 0f) 1f else midZoom
+    private val safeMaxZoom = if (maxZoom.isNaN() || maxZoom <= 0f) 1f else maxZoom
+    
+    private val logSpanLeft = if (safeMidZoom > safeMinZoom && safeMinZoom > 0f) {
+        ln((safeMidZoom / safeMinZoom).toDouble())
+    } else {
+        0.0
+    }
+    
+    private val logSpanRight = if (safeMaxZoom > safeMidZoom && safeMidZoom > 0f) {
+        ln((safeMaxZoom / safeMidZoom).toDouble())
+    } else {
+        0.0
+    }
 
     // ★ 하한 강제 제거(또는 파라미터로 제어)
-    val leftTicks  = (ticksPerLogUnit * logSpanLeft ).roundToInt().coerceAtLeast(minLeftTicks)
-    val rightTicks = (ticksPerLogUnit * logSpanRight).roundToInt().coerceAtLeast(minRightTicks)
+    val leftTicks = if (logSpanLeft.isNaN() || logSpanLeft.isInfinite()) {
+        minLeftTicks
+    } else {
+        (ticksPerLogUnit * logSpanLeft).roundToInt().coerceAtLeast(minLeftTicks)
+    }
+    
+    val rightTicks = if (logSpanRight.isNaN() || logSpanRight.isInfinite()) {
+        minRightTicks
+    } else {
+        (ticksPerLogUnit * logSpanRight).roundToInt().coerceAtLeast(minRightTicks)
+    }
 
     val total = leftTicks + 1 + rightTicks
     val centerIndex = leftTicks
@@ -29,12 +53,24 @@ class ZoomRulerAdapter(
 
     // 라벨을 찍을 줌 스톱 (중복 방지: 정확히 해당 포지션에서만 라벨)
     private val majorStops = floatArrayOf(0.6f, 1f, 2f, 3f, 5f, 10f, 20f, 30f)
-        .filter { it in minZoom..maxZoom }
+        .filter { it in safeMinZoom..safeMaxZoom }
         .toFloatArray()
 
-    // 계산된 “라벨 포지션 집합” (정수 포지션에 1:1 매칭)
-    private val majorPositions: Set<Int> by lazy {
-        majorStops.map { zoomToPosition(it) }.toSet()
+    // 계산된 "라벨 포지션 집합" (정수 포지션에 1:1 매칭)
+    private val majorPositions: Set<Int> by lazy<Set<Int>> {
+        try {
+            majorStops.asIterable().mapNotNull { zoom ->
+                try {
+                    zoomToPosition(zoom)
+                } catch (e: Exception) {
+                    Log.w("ZoomRulerAdapter", "Failed to convert zoom $zoom to position", e)
+                    null
+                }
+            }.toSet()
+        } catch (e: Exception) {
+            Log.e("ZoomRulerAdapter", "Failed to calculate majorPositions", e)
+            emptySet<Int>()
+        }
     }
 
     inner class VH(val v: ZoomTickView): RecyclerView.ViewHolder(v)
@@ -60,24 +96,94 @@ class ZoomRulerAdapter(
 
     /** 실시간 보간용: 실수 포지션 → 줌 */
     fun positionToZoom(posF: Float): Float {
+        if (posF.isNaN() || posF.isInfinite()) {
+            return safeMidZoom
+        }
+        
         return if (posF <= centerIndex) {
+            if (centerIndex <= 0 || safeMidZoom <= safeMinZoom || safeMinZoom <= 0f) {
+                return safeMidZoom
+            }
             val t = (posF / centerIndex).coerceIn(0f, 1f) // [0..1] => min→mid
-            (minZoom * ((midZoom / minZoom).toDouble().pow(t.toDouble()))).toFloat()
+            val result = (safeMinZoom * ((safeMidZoom / safeMinZoom).toDouble().pow(t.toDouble()))).toFloat()
+            if (result.isNaN() || result.isInfinite()) safeMidZoom else result
         } else {
+            if (rightTicks <= 0 || safeMaxZoom <= safeMidZoom || safeMidZoom <= 0f) {
+                return safeMidZoom
+            }
             val t = ((posF - centerIndex) / rightTicks).coerceIn(0f, 1f) // mid→max
-            (midZoom * ((maxZoom / midZoom).toDouble().pow(t.toDouble()))).toFloat()
+            val result = (safeMidZoom * ((safeMaxZoom / safeMidZoom).toDouble().pow(t.toDouble()))).toFloat()
+            if (result.isNaN() || result.isInfinite()) safeMidZoom else result
         }
     }
 
     /** 줌 → 정수 포지션 (라벨 포지션 계산에 사용) */
     fun zoomToPosition(zIn: Float): Int {
-        val z = zIn.coerceIn(minZoom, maxZoom)
-        return if (z <= midZoom) {
-            val t = (ln((z / minZoom).toDouble()) / ln((midZoom / minZoom).toDouble())).toFloat()
-            (t * centerIndex).roundToInt()
+        // 1) null/NaN 체크
+        if (zIn.isNaN() || zIn.isInfinite()) {
+            Log.w("ZoomRulerAdapter", "Invalid zoom value: $zIn, returning centerIndex")
+            return centerIndex
+        }
+        
+        // 2) 안전한 범위 클램프
+        val z = zIn.coerceIn(safeMinZoom, safeMaxZoom)
+        
+        // 3) 범위가 유효하지 않은 경우 (min == max 등)
+        if (safeMaxZoom <= safeMinZoom) {
+            Log.w("ZoomRulerAdapter", "Invalid zoom range: min=$safeMinZoom, max=$safeMaxZoom, returning centerIndex")
+            return centerIndex
+        }
+        
+        return if (z <= safeMidZoom) {
+            // 왼쪽 구간: minZoom → midZoom
+            if (safeMidZoom <= safeMinZoom || safeMinZoom <= 0f) {
+                // 분모가 0이거나 유효하지 않은 경우
+                return centerIndex
+            }
+            
+            val numerator = ln((z / safeMinZoom).toDouble())
+            val denominator = ln((safeMidZoom / safeMinZoom).toDouble())
+            
+            if (denominator == 0.0 || denominator.isNaN() || denominator.isInfinite() ||
+                numerator.isNaN() || numerator.isInfinite()) {
+                Log.w("ZoomRulerAdapter", "Invalid log calculation (left): num=$numerator, denom=$denominator")
+                return centerIndex
+            }
+            
+            val t = (numerator / denominator).toFloat()
+            
+            if (t.isNaN() || t.isInfinite()) {
+                Log.w("ZoomRulerAdapter", "Invalid t value (left): $t")
+                return centerIndex
+            }
+            
+            val pos = (t * centerIndex).roundToInt()
+            pos.coerceIn(0, total - 1)
         } else {
-            val t = (ln((z / midZoom).toDouble()) / ln((maxZoom / midZoom).toDouble())).toFloat()
-            (centerIndex + t * rightTicks).roundToInt()
+            // 오른쪽 구간: midZoom → maxZoom
+            if (safeMaxZoom <= safeMidZoom || safeMidZoom <= 0f) {
+                // 분모가 0이거나 유효하지 않은 경우
+                return centerIndex
+            }
+            
+            val numerator = ln((z / safeMidZoom).toDouble())
+            val denominator = ln((safeMaxZoom / safeMidZoom).toDouble())
+            
+            if (denominator == 0.0 || denominator.isNaN() || denominator.isInfinite() ||
+                numerator.isNaN() || numerator.isInfinite()) {
+                Log.w("ZoomRulerAdapter", "Invalid log calculation (right): num=$numerator, denom=$denominator")
+                return centerIndex
+            }
+            
+            val t = (numerator / denominator).toFloat()
+            
+            if (t.isNaN() || t.isInfinite()) {
+                Log.w("ZoomRulerAdapter", "Invalid t value (right): $t")
+                return centerIndex
+            }
+            
+            val pos = (centerIndex + t * rightTicks).roundToInt()
+            pos.coerceIn(0, total - 1)
         }
     }
 

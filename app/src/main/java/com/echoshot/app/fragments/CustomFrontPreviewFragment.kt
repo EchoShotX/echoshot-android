@@ -74,6 +74,8 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executor
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
+import android.os.SystemClock
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
@@ -159,6 +161,15 @@ class CustomFrontPreviewFragment : Fragment() {
     @Volatile private var recordingComplete = false
     private val cvRecordingStarted = ConditionVariable(false)
     private val cvRecordingComplete = ConditionVariable(false)
+
+    // ✅ 중복 호출 방지를 위한 원자 플래그
+    private val isRecording = AtomicBoolean(false)
+    private val isStopping = AtomicBoolean(false)
+    
+    // ✅ 버튼 디바운스용
+    @Volatile
+    private var lastStopClick = 0L
+    private val STOP_DEBOUNCE_MS = 600L
     
     // 갤러리 버튼 원래 상태 저장
     private var galleryButtonOriginalDrawable: android.graphics.drawable.Drawable? = null
@@ -447,6 +458,21 @@ class CustomFrontPreviewFragment : Fragment() {
 
     private fun isCurrentlyRecording() = recordingStarted && !recordingComplete
 
+    // ✅ 세션 닫힘 상태 확인 헬퍼 함수
+    private fun isSessionClosed(session: CameraCaptureSession): Boolean {
+        return try {
+            // device 속성에 접근 시도: 닫혔으면 IllegalStateException 발생
+            session.device
+            false
+        } catch (e: IllegalStateException) {
+            true
+        } catch (e: Exception) {
+            // 다른 예외는 닫힌 것으로 간주
+            Log.w(TAG, "⚠️ 세션 상태 확인 중 예외: ${e.message}")
+            true
+        }
+    }
+
     private fun createEncoder(name: String): EncoderWrapper {
         var width = args.width
         var height = args.height
@@ -475,7 +501,17 @@ class CustomFrontPreviewFragment : Fragment() {
 
     @SuppressLint("MissingPermission")
     private fun startFrontRecording() = lifecycleScope.launch(Dispatchers.IO) {
-        if (recordingStarted) return@launch
+        // ✅ 중복 시작 방지
+        if (isRecording.getAndSet(true)) {
+            Log.w(TAG, "⚠️ 녹화가 이미 시작되었습니다. 중복 호출 무시")
+            return@launch
+        }
+        isStopping.set(false)
+
+        if (recordingStarted) {
+            isRecording.set(false)
+            return@launch
+        }
 
         // 🔁 새 녹화 시작이므로 상태 초기화
         recordingComplete = false
@@ -493,23 +529,41 @@ class CustomFrontPreviewFragment : Fragment() {
         // 프리뷰 전용 리퀘스트를 쓰고 있었다면, 레코드 타깃으로 세션 재구성
         if (previewRequest != null) {
             val recordTargets = pipeline.getRecordTargets()
-            session.close()
+            
+            // ✅ 세션 상태 확인 후 안전하게 닫기
+            withContext(Dispatchers.Main) {
+                runCatching {
+                    if (::session.isInitialized && !isSessionClosed(session)) {
+                        session.close()
+                    }
+                }.onFailure { e ->
+                    Log.w(TAG, "⚠️ startFrontRecording에서 session.close() 실패: ${e.message}")
+                }
+            }
+            
             session = createCaptureSession(
                 camera, recordTargets, cameraHandler, recordingCompleteOnClose = true
             )
-            session.setRepeatingRequest(
-                recordRequest,
-                object : CameraCaptureSession.CaptureCallback() {
-                    override fun onCaptureCompleted(
-                        session: CameraCaptureSession,
-                        request: CaptureRequest,
-                        result: TotalCaptureResult
-                    ) {
-                        if (isCurrentlyRecording()) encoder.frameAvailable()
-                    }
-                },
-                cameraHandler
-            )
+            
+            runCatching {
+                if (!isSessionClosed(session)) {
+                    session.setRepeatingRequest(
+                        recordRequest,
+                        object : CameraCaptureSession.CaptureCallback() {
+                            override fun onCaptureCompleted(
+                                session: CameraCaptureSession,
+                                request: CaptureRequest,
+                                result: TotalCaptureResult
+                            ) {
+                                if (isCurrentlyRecording()) encoder.frameAvailable()
+                            }
+                        },
+                        cameraHandler
+                    )
+                }
+            }.onFailure { e ->
+                Log.w(TAG, "⚠️ startFrontRecording에서 setRepeatingRequest() 실패: ${e.message}")
+            }
         }
 
         recordingStartMillis = System.currentTimeMillis()
@@ -535,43 +589,75 @@ class CustomFrontPreviewFragment : Fragment() {
     }
 
     private fun stopFrontRecording() = lifecycleScope.launch(Dispatchers.IO) {
-        if (!recordingStarted) return@launch
+        Log.d(TAG, "🛑 stopFrontRecording() 호출됨")
 
-        // 1) 최소 한 프레임 인코딩은 보장
-        cvRecordingStarted.block()
-        encoder.waitForFirstFrame()
+        // ✅ 재진입 방지: 이미 정지 중이면 무시
+        if (!isRecording.get() || !isStopping.compareAndSet(false, true)) {
+            Log.w(TAG, "⚠️ stopFrontRecording() 중복 호출 무시 (이미 정지 중이거나 녹화 중이 아님)")
+            return@launch
+        }
 
-        // 2) 녹화 완료 플래그 & 파이프라인 정리
-        recordingComplete = true
-        pipeline.stopRecording()
-        pipeline.clearFrameListener()
-        cvRecordingComplete.open()   // 더 이상 onClosed에 의존하지 않음
-
-        // 3) 캡처 중단 + 프리뷰 요청으로 전환 (세션은 닫지 않는다!)
+        // ✅ UI에서 중복 클릭 방지
         withContext(Dispatchers.Main) {
-            try {
-                session.stopRepeating()
-            } catch (_: Throwable) { }
+            fragmentBinding.captureButton.isEnabled = false
+        }
 
-            try {
-                // 기존 세션을 그대로 사용해서 프리뷰 요청만 다시 건다
-                val previewReq = pipeline.createPreviewRequest(session, args.previewStabilization)
-                    ?: camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                        val previewTargets = pipeline.getPreviewTargets()
-                        previewTargets.forEach { addTarget(it) }
-
-                        set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                        set(
-                            CaptureRequest.CONTROL_AF_MODE,
-                            CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
-                        )
-                        set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
-                    }.build()
-
-                session.setRepeatingRequest(previewReq, null, cameraHandler)
-            } catch (e: Exception) {
-                Log.e(TAG, "전면 프리뷰 재시작 실패", e)
+        try {
+            if (!recordingStarted) {
+                isRecording.set(false)
+                isStopping.set(false)
+                withContext(Dispatchers.Main) {
+                    fragmentBinding.captureButton.isEnabled = true
+                }
+                return@launch
             }
+
+            // 1) 최소 한 프레임 인코딩은 보장
+            cvRecordingStarted.block()
+            encoder.waitForFirstFrame()
+
+            // 2) 녹화 완료 플래그 & 파이프라인 정리
+            recordingComplete = true
+            pipeline.stopRecording()
+            pipeline.clearFrameListener()
+            cvRecordingComplete.open()   // 더 이상 onClosed에 의존하지 않음
+
+            // 3) 캡처 중단 + 프리뷰 요청으로 전환 (세션은 닫지 않는다!)
+            withContext(Dispatchers.Main) {
+                // ✅ 세션 유효성 검사 및 예외 무해화
+                runCatching {
+                    if (::session.isInitialized && !isSessionClosed(session)) {
+                        session.stopRepeating()
+                    }
+                }.onFailure { e ->
+                    Log.w(TAG, "⚠️ stopRepeating() 실패 (무해화): ${e.message}")
+                }
+
+                try {
+                    // 기존 세션을 그대로 사용해서 프리뷰 요청만 다시 건다
+                    if (::session.isInitialized && !isSessionClosed(session)) {
+                        val previewReq = pipeline.createPreviewRequest(session, args.previewStabilization)
+                            ?: camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                                val previewTargets = pipeline.getPreviewTargets()
+                                previewTargets.forEach { addTarget(it) }
+
+                                set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+                                set(
+                                    CaptureRequest.CONTROL_AF_MODE,
+                                    CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+                                )
+                                set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+                            }.build()
+
+                        runCatching {
+                            session.setRepeatingRequest(previewReq, null, cameraHandler)
+                        }.onFailure { e ->
+                            Log.w(TAG, "⚠️ setRepeatingRequest() 실패: ${e.message}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "전면 프리뷰 재시작 실패", e)
+                }
 
             // 4) UI 복원 (버튼/타이머/갤러리/카메라 스위치)
             fragmentBinding.captureButton.background =
@@ -634,38 +720,46 @@ class CustomFrontPreviewFragment : Fragment() {
             }
         }
 
-        // 9) 상태 플래그 정리
-        recordingStarted = false
-        
-        // 10) 프래그먼트 재시작 (프리뷰가 멈춘 문제 해결)
-        Handler(Looper.getMainLooper()).post {
-            if (isAdded) {
-                // 프래그먼트를 다시 띄우기 위해 popBackStack 후 같은 프래그먼트로 다시 네비게이션
-                findNavController().popBackStack()
-                
-                // 같은 프래그먼트로 다시 네비게이션하여 완전히 재시작
-                val frontId = getFrontCameraId()
-                if (frontId != null) {
-                    val action = CustomPreviewFragmentDirections
-                        .actionCustomPreviewToCustomFrontPreview(
-                            frontId,
-                            args.width,
-                            args.height,
-                            args.fps,
-                            args.dynamicRange,
-                            args.colorSpace,
-                            args.previewStabilization,
-                            args.useMediaRecorder,
-                            args.videoCodec,
-                            args.filterOn,
-                            args.transfer,
-                            args.useHardware,
-                            "hardware"
-                        ).apply {
-                            setForcePhysicalId(null)
-                        }
-                    findNavController().navigate(action)
+            // 9) 상태 플래그 정리
+            recordingStarted = false
+            
+            // 10) 프래그먼트 재시작 (프리뷰가 멈춘 문제 해결)
+            Handler(Looper.getMainLooper()).post {
+                if (isAdded) {
+                    // 프래그먼트를 다시 띄우기 위해 popBackStack 후 같은 프래그먼트로 다시 네비게이션
+                    findNavController().popBackStack()
+                    
+                    // 같은 프래그먼트로 다시 네비게이션하여 완전히 재시작
+                    val frontId = getFrontCameraId()
+                    if (frontId != null) {
+                        val action = CustomPreviewFragmentDirections
+                            .actionCustomPreviewToCustomFrontPreview(
+                                frontId,
+                                args.width,
+                                args.height,
+                                args.fps,
+                                args.dynamicRange,
+                                args.colorSpace,
+                                args.previewStabilization,
+                                args.useMediaRecorder,
+                                args.videoCodec,
+                                args.filterOn,
+                                args.transfer,
+                                args.useHardware,
+                                "hardware"
+                            ).apply {
+                                setForcePhysicalId(null)
+                            }
+                        findNavController().navigate(action)
+                    }
                 }
+            }
+        } finally {
+            // ✅ 항상 플래그 리셋 및 UI 복구
+            isRecording.set(false)
+            isStopping.set(false)
+            withContext(Dispatchers.Main) {
+                fragmentBinding.captureButton.isEnabled = true
             }
         }
     }
@@ -711,7 +805,17 @@ class CustomFrontPreviewFragment : Fragment() {
             if (!recordingStarted) {
                 startFrontRecording()
             } else {
-                stopFrontRecording()
+                // ✅ 디바운스: 짧은 시간 내 중복 클릭 방지
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastStopClick < STOP_DEBOUNCE_MS) {
+                    Log.d(TAG, "⏱️ 디바운스: 중복 클릭 무시")
+                    return@setOnClickListener
+                }
+                lastStopClick = now
+                
+                lifecycleScope.launch {
+                    stopFrontRecording()
+                }
             }
         }
     }
@@ -827,13 +931,26 @@ class CustomFrontPreviewFragment : Fragment() {
     private fun applyExposureComp(target: Int) {
         val r = aeCompRange ?: return
         currentAeComp = target.coerceIn(r.lower, r.upper)
+        
+        // ✅ 세션 상태 확인 후 안전하게 호출
+        if (!::session.isInitialized || isSessionClosed(session)) {
+            Log.w(TAG, "⚠️ applyExposureComp: 세션이 닫혔거나 초기화되지 않음")
+            return
+        }
+        
         val builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
             pipeline.getPreviewTargets().forEach { addTarget(it) }
             set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
             set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
             set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, currentAeComp)
         }
-        session.setRepeatingRequest(builder.build(), null, cameraHandler)
+        
+        runCatching {
+            session.setRepeatingRequest(builder.build(), null, cameraHandler)
+        }.onFailure { e ->
+            Log.w(TAG, "⚠️ applyExposureComp에서 setRepeatingRequest() 실패: ${e.message}")
+        }
+        
         // 슬라이더와 동기화
         val max = (r.upper - r.lower)
         evSeek.max = max
@@ -862,7 +979,14 @@ class CustomFrontPreviewFragment : Fragment() {
                 cont.resumeWithException(exc)
             }
             override fun onClosed(session: CameraCaptureSession) {
-                if (!recordingCompleteOnClose || !isCurrentlyRecording()) return
+                Log.d(TAG, "🎬 Session closed callback 진입")
+                // ✅ 세션 조작 금지: onClosed에서는 세션에 대한 조작을 하지 않음
+                // 플래그만 설정하고 파이프라인 정리
+                if (!recordingCompleteOnClose || !isCurrentlyRecording()) {
+                    Log.w(TAG, "⚠️ 조건 불충족 - open() 호출 생략됨")
+                    return
+                }
+                Log.d(TAG, "✅ 조건 만족 - cvRecordingComplete.open() 호출")
                 recordingComplete = true
                 pipeline.stopRecording()
                 cvRecordingComplete.open()

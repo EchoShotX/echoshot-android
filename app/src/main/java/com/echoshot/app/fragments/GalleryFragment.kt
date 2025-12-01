@@ -31,11 +31,13 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.widget.AppCompatImageView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.bumptech.glide.Glide
 import com.chaquo.python.Python
 import com.echoshot.app.R
@@ -68,6 +70,7 @@ import java.io.FileNotFoundException
 import kotlinx.coroutines.*
 import kotlinx.coroutines.asCoroutineDispatcher
 import java.util.concurrent.Executors
+import com.echoshot.app.utils.setupBottomNavigationBar
 
 
 // 1) 리스트에 들어갈 두 가지 타입
@@ -146,6 +149,50 @@ class GalleryFragment : Fragment() {
             }
         )
 
+        // 네비게이션 바 설정
+        setupBottomNavigationBar(
+            currentPage = "gallery",
+            onHomeClick = {
+                // 갤러리에서 홈으로 이동
+                val action = GalleryFragmentDirections.actionGalleryFragmentToHomeFragment()
+                findNavController().navigate(action)
+            },
+            onCameraClick = {
+                // 갤러리에서 카메라로 이동 (CustomPreviewFragment)
+                val action = GalleryFragmentDirections.actionGalleryFragmentToCustomPreviewFragment(
+                    args.cameraId,
+                    args.width,
+                    args.height,
+                    args.fps,
+                    args.dynamicRange,
+                    args.colorSpace,
+                    args.previewStabilization,
+                    args.useMediaRecorder,
+                    args.videoCodec,
+                    args.filterOn,
+                    args.transfer,
+                    args.useHardware,
+                    args.pipelineMode
+                ).apply {
+                    args.forcePhysicalId?.let { setForcePhysicalId(it) }
+                }
+                findNavController().navigate(action)
+            }
+        )
+
+        // ✅ SwipeRefreshLayout 설정 (위로 당기면 새로고침)
+        binding.swipeRefreshLayout.setOnRefreshListener {
+            // 현재 모드에 맞춰 새로고침
+            reloadForMode(null)
+        }
+        // 새로고침 색상 설정 (선택사항)
+        binding.swipeRefreshLayout.setColorSchemeResources(
+            android.R.color.holo_blue_bright,
+            android.R.color.holo_green_light,
+            android.R.color.holo_orange_light,
+            android.R.color.holo_red_light
+        )
+
         // 1) 초기 모드: 네비게이션 인자대로
         val startBasic = args.startBasic
         mode = if (startBasic) GalleryMode.BASIC else GalleryMode.EXTENDED
@@ -203,6 +250,7 @@ class GalleryFragment : Fragment() {
 
                 binding.galleryRecyclerView.adapter = SectionedAdapter(
                     items,
+                    viewLifecycleOwner,  // ✅ LifecycleOwner 전달
                     onItemClick = { v ->
                         // BASIC: 바로 플레이어 / EXTENDED: 기존 동작 유지
                         if (mode == GalleryMode.EXTENDED && v.type == "cropped") {
@@ -221,6 +269,9 @@ class GalleryFragment : Fragment() {
                         // BASIC에선 잠금 개념 없음
                     }
                 )
+                
+                // ✅ 새로고침 완료 후 로딩 인디케이터 숨기기
+                binding.swipeRefreshLayout.isRefreshing = false
             }
         }
     }
@@ -546,6 +597,7 @@ class GalleryFragment : Fragment() {
     /** 섹션 헤더 + 비디오 뷰타입 2종 처리 어댑터 */
     private class SectionedAdapter(
         private val items: List<ListItem>,
+        private val lifecycleOwner: LifecycleOwner,
         private val onItemClick: (ListItem.Video) -> Unit,
         private val onLockedClick: (ListItem.Video) -> Unit
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
@@ -569,15 +621,45 @@ class GalleryFragment : Fragment() {
             : RecyclerView.ViewHolder(binding.root) {
 
             fun bind(v: ListItem.Video) {
-                Glide.with(binding.root).load(v.uri).centerCrop().into(binding.thumbnailImageView)
-
-                // durationMs가 0이면 사진이므로 재생 시간 숨김
+                // ✅ 비디오인 경우 MediaMetadataRetriever로 명시적으로 1초 시점의 프레임 추출
+                // 이렇게 하면 두 동영상(zoomed/original)이 같은 시점의 미리보기를 표시함
                 if (v.durationMs > 0) {
+                    // 비디오: 1초 시점의 프레임을 명시적으로 추출 (두 동영상 동기화)
+                    if (lifecycleOwner is Fragment) {
+                        (lifecycleOwner as Fragment).viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                            val thumb = try {
+                                val retriever = MediaMetadataRetriever()
+                                retriever.setDataSource(binding.root.context, v.uri)
+                                // 1초(1,000,000 마이크로초) 시점의 키프레임 추출
+                                val bmp = retriever.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                                retriever.release()
+                                bmp
+                            } catch (e: Exception) {
+                                Log.e(TAG, "썸네일 생성 실패: ${v.uri}", e)
+                                null
+                            }
+                            
+                            withContext(Dispatchers.Main) {
+                                if (thumb != null) {
+                                    binding.thumbnailImageView.setImageBitmap(thumb)
+                                } else {
+                                    // 실패 시 Glide로 폴백
+                                    Glide.with(binding.root).load(v.uri).centerCrop().into(binding.thumbnailImageView)
+                                }
+                            }
+                        }
+                    } else {
+                        // Fragment가 아닌 경우 Glide 사용
+                        Glide.with(binding.root).load(v.uri).centerCrop().into(binding.thumbnailImageView)
+                    }
+                    
                     val m = TimeUnit.MILLISECONDS.toMinutes(v.durationMs)
                     val s = TimeUnit.MILLISECONDS.toSeconds(v.durationMs) % 60
                     binding.tvPlayDuration.text = String.format("%02d:%02d", m, s)
                     binding.tvPlayDuration.visibility = View.VISIBLE
                 } else {
+                    // 사진: Glide 사용
+                    Glide.with(binding.root).load(v.uri).centerCrop().into(binding.thumbnailImageView)
                     binding.tvPlayDuration.visibility = View.GONE
                 }
 
@@ -666,6 +748,7 @@ class GalleryFragment : Fragment() {
                     binding.galleryRecyclerView.adapter = null
                     binding.galleryRecyclerView.adapter = SectionedAdapter(
                         items,
+                        viewLifecycleOwner,  // ✅ LifecycleOwner 전달
                         onItemClick = { v ->
                             when (v.type) {
                                 "cropped" -> {
@@ -682,6 +765,8 @@ class GalleryFragment : Fragment() {
                         onLockedClick = { v -> showLockedOverlay(v.uri) }
                     )
                 }
+                // ✅ 새로고침 완료 후 로딩 인디케이터 숨기기
+                binding.swipeRefreshLayout.isRefreshing = false
             }
         }
     }
