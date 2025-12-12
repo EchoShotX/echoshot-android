@@ -628,6 +628,9 @@
         <action
             android:id="@+id/action_customFrontPreviewFragment_to_photoFrontFragment"
             app:destination="@id/photoFrontFragment" />
+        <action
+            android:id="@+id/action_customFrontPreviewFragment_to_homeFragment"
+            app:destination="@id/home_fragment" />
 
     </fragment>
 
@@ -666,6 +669,9 @@
         <action
             android:id="@+id/action_photoFragment_to_photoFrontFragment"
             app:destination="@id/photoFrontFragment" />
+        <action
+            android:id="@+id/action_photoFragment_to_homeFragment"
+            app:destination="@id/home_fragment" />
     </fragment>
 
     <fragment
@@ -701,6 +707,9 @@
         <action
             android:id="@+id/action_photoFrontFragment_to_customFrontPreviewFragment"
             app:destination="@id/custom_front_preview_fragment" />
+        <action
+            android:id="@+id/action_photoFrontFragment_to_homeFragment"
+            app:destination="@id/home_fragment" />
     </fragment>
 
     <fragment

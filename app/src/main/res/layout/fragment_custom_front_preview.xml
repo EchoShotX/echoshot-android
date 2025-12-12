@@ -182,14 +182,22 @@
     </LinearLayout>
 
     <!-- 촬영 타이머 -->
-    <Chronometer
+    <!-- 녹화 타이머: 상단 중앙 -->
+    <TextView
         android:id="@+id/capture_timer"
-        android:layout_width="96dp"
-        android:layout_height="96dp"
-        android:layout_gravity="bottom|right"
-        android:layout_marginBottom="68dp"
-        android:textColor="@android:color/holo_red_light"
-        android:scaleType="fitCenter"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="62dp"
+        android:background="@drawable/bg_recording_timer"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:text="00:00:00"
+        android:textColor="@android:color/white"
+        android:textSize="14sp"
+        android:textStyle="bold"
         android:visibility="gone" />
 
     <!-- 하단 네비게이션 바 -->

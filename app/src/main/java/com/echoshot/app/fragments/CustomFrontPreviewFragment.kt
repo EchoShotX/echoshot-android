@@ -55,6 +55,7 @@ import androidx.navigation.NavController
 import androidx.navigation.Navigation
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
+import com.echoshot.app.utils.setupBottomNavigationBar
 import com.example.android.camera.utils.getPreviewOutputSize
 import com.echoshot.app.BuildConfig
 import com.echoshot.app.CameraActivity
@@ -152,6 +153,42 @@ class CustomFrontPreviewFragment : Fragment() {
 
     private var recordingStartMillis: Long = 0L
 
+    // 타이머 업데이트용 Handler & Runnable
+    private val timerHandler = Handler(Looper.getMainLooper())
+    private var timerRunnable: Runnable? = null
+
+    // 타이머 포맷팅 함수 (시:분:초)
+    private fun formatTime(millis: Long): String {
+        val totalSeconds = millis / 1000
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return String.format("%02d:%02d:%02d", hours, minutes, seconds)
+    }
+
+    // 타이머 업데이트 시작
+    private fun startTimerUpdate() {
+        stopTimerUpdate() // 기존 타이머가 있으면 중지
+        timerRunnable = object : Runnable {
+            override fun run() {
+                if (recordingStarted && recordingStartMillis > 0) {
+                    val elapsed = System.currentTimeMillis() - recordingStartMillis
+                    fragmentBinding.captureTimer?.text = formatTime(elapsed)
+                    timerHandler.postDelayed(this, 1000) // 1초마다 업데이트
+                }
+            }
+        }
+        timerHandler.post(timerRunnable!!)
+    }
+
+    // 타이머 업데이트 중지
+    private fun stopTimerUpdate() {
+        timerRunnable?.let {
+            timerHandler.removeCallbacks(it)
+            timerRunnable = null
+        }
+    }
+
     /** Orientation */
     private val orientation: Int by lazy {
         characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION)!!
@@ -228,6 +265,43 @@ class CustomFrontPreviewFragment : Fragment() {
     @SuppressLint("MissingPermission")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // 네비게이션 바 설정
+        setupBottomNavigationBar(
+            currentPage = "camera",
+            onHomeClick = {
+                // 전면 카메라에서 홈으로 이동
+                val action = CustomFrontPreviewFragmentDirections.actionCustomFrontPreviewFragmentToHomeFragment()
+                findNavController().navigate(action)
+            },
+            onGalleryClick = {
+                // 전면 카메라에서 갤러리로 이동
+                val action = CustomFrontPreviewFragmentDirections
+                    .actionCustomFrontPreviewFragmentToGalleryFragment(
+                        args.cameraId,
+                        args.width,
+                        args.height,
+                        args.fps,
+                        args.dynamicRange,
+                        args.colorSpace,
+                        args.previewStabilization,
+                        args.useMediaRecorder,
+                        args.videoCodec,
+                        args.filterOn,
+                        args.transfer,
+                        args.useHardware,
+                        "hardware"
+                    ).apply {
+                        try {
+                            startBasic = false
+                        } catch (_: Throwable) {
+                            setStartBasic(false)
+                        }
+                    }
+                findNavController().navigate(action)
+            },
+            isRecording = { isCurrentlyRecording() }
+        )
 
         updateGalleryThumbnail()
 
@@ -572,8 +646,12 @@ class CustomFrontPreviewFragment : Fragment() {
         fragmentBinding.captureButton.post {
             fragmentBinding.captureButton.background =
                 ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_pressed)
-            fragmentBinding.captureTimer?.visibility = View.VISIBLE
-            fragmentBinding.captureTimer?.start()
+            fragmentBinding.captureTimer?.apply {
+                visibility = View.VISIBLE
+                text = "00:00:00"
+            }
+            // 타이머 업데이트 시작
+            startTimerUpdate()
             
             // 📸 갤러리 버튼을 사진 촬영 버튼으로 변경
             galleryButtonOriginalDrawable = fragmentBinding.galleryButton.drawable
@@ -662,8 +740,9 @@ class CustomFrontPreviewFragment : Fragment() {
             // 4) UI 복원 (버튼/타이머/갤러리/카메라 스위치)
             fragmentBinding.captureButton.background =
                 ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_normal)
+            // 타이머 업데이트 중지
+            stopTimerUpdate()
             fragmentBinding.captureTimer?.visibility = View.GONE
-            fragmentBinding.captureTimer?.stop()
 
             galleryButtonOriginalDrawable?.let {
                 fragmentBinding.galleryButton.setImageDrawable(it)
@@ -1009,6 +1088,8 @@ class CustomFrontPreviewFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        // 타이머 업데이트 중지
+        stopTimerUpdate()
         _fragmentBinding = null
         super.onDestroyView()
     }

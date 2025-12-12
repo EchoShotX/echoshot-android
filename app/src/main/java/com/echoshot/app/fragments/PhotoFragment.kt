@@ -36,6 +36,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import com.echoshot.app.R
+import com.echoshot.app.utils.setupBottomNavigationBar
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ExecutorService
@@ -117,6 +118,21 @@ class PhotoFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // 네비게이션 바 설정
+        setupBottomNavigationBar(
+            currentPage = "camera",
+            onHomeClick = {
+                // 사진 모드에서 홈으로 이동
+                val action = PhotoFragmentDirections.actionPhotoFragmentToHomeFragment()
+                findNavController().navigate(action)
+            },
+            onGalleryClick = {
+                // 사진 모드에서 갤러리로 이동
+                openGallery()
+            },
+            isRecording = { false } // 사진 모드는 녹화 기능 없음
+        )
 
         updateGalleryThumbnail()
 

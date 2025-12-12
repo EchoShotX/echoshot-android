@@ -1,79 +1,77 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/bottom_navigation_bar"
     android:layout_width="match_parent"
     android:layout_height="60dp"
-    android:orientation="horizontal"
-    android:background="#000000"
-    android:gravity="center_vertical"
-    android:elevation="8dp">
+    android:clipChildren="false"
+    android:clipToPadding="false">
 
-    <!-- 1. 갤러리 -->
+    <!-- 하얀색 바 배경 (펼쳐지는 부분) -->
+    <View
+        android:id="@+id/nav_bar_background"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_navigation_bar" />
+
+    <!-- 갤러리 버튼 (왼쪽) - 초기에는 가운데, 애니메이션으로 왼쪽 이동 -->
     <ImageView
         android:id="@+id/nav_gallery"
-        android:layout_width="0dp"
+        android:layout_width="44dp"
         android:layout_height="44dp"
-        android:layout_weight="1"
+        android:layout_gravity="center"
         android:src="@drawable/ic_photo_gallery"
         android:contentDescription="갤러리"
-        android:padding="8dp"
+        android:padding="10dp"
         android:clickable="true"
         android:focusable="true"
-        app:tint="@android:color/white"
-        android:background="?attr/selectableItemBackground"
-        android:scaleType="fitCenter" />
+        app:tint="@android:color/black"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
 
-    <!-- 2. 아카이브 (플레이스홀더 - 아이콘 없음) -->
+    <!-- 카메라 버튼 (가운데, 항상 보임) -->
+    <ImageView
+        android:id="@+id/nav_camera"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="center"
+        android:src="@drawable/ic_photo_camera"
+        android:contentDescription="카메라"
+        android:padding="12dp"
+        android:clickable="true"
+        android:focusable="true"
+        app:tint="@android:color/black"
+        android:background="@drawable/bg_camera_button_circle"
+        android:scaleType="fitCenter"
+        android:elevation="4dp" />
+
+    <!-- 홈 버튼 (오른쪽) - 초기에는 가운데, 애니메이션으로 오른쪽 이동 -->
+    <ImageView
+        android:id="@+id/nav_home"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_gravity="center"
+        android:src="@drawable/ic_home"
+        android:contentDescription="홈"
+        android:padding="10dp"
+        android:clickable="true"
+        android:focusable="true"
+        app:tint="@android:color/black"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
+
+    <!-- 플레이스홀더 (숨김) -->
     <View
         android:id="@+id/nav_archive"
         android:layout_width="0dp"
-        android:layout_height="44dp"
-        android:layout_weight="1"
-        android:contentDescription="아카이브"
-        android:clickable="true"
-        android:focusable="true"
-        android:background="?attr/selectableItemBackground" />
+        android:layout_height="0dp"
+        android:visibility="gone" />
 
-    <!-- 3. 카메라 -->
-    <ImageView
-        android:id="@+id/nav_camera"
-        android:layout_width="0dp"
-        android:layout_height="44dp"
-        android:layout_weight="1"
-        android:src="@drawable/ic_photo_camera"
-        android:contentDescription="카메라"
-        android:padding="8dp"
-        android:clickable="true"
-        android:focusable="true"
-        app:tint="@android:color/white"
-        android:background="?attr/selectableItemBackground"
-        android:scaleType="fitCenter" />
-
-    <!-- 4. 프로필 (플레이스홀더 - 아이콘 없음) -->
     <View
         android:id="@+id/nav_profile"
         android:layout_width="0dp"
-        android:layout_height="44dp"
-        android:layout_weight="1"
-        android:contentDescription="프로필"
-        android:clickable="true"
-        android:focusable="true"
-        android:background="?attr/selectableItemBackground" />
+        android:layout_height="0dp"
+        android:visibility="gone" />
 
-    <!-- 5. 홈 -->
-    <ImageView
-        android:id="@+id/nav_home"
-        android:layout_width="0dp"
-        android:layout_height="44dp"
-        android:layout_weight="1"
-        android:src="@drawable/ic_home"
-        android:contentDescription="홈"
-        android:padding="8dp"
-        android:clickable="true"
-        android:focusable="true"
-        app:tint="@android:color/white"
-        android:background="?attr/selectableItemBackground"
-        android:scaleType="fitCenter" />
-</LinearLayout>
-
+</FrameLayout>

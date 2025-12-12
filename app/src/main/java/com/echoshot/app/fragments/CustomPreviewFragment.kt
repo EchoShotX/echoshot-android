@@ -311,6 +311,42 @@ class CustomPreviewFragment : Fragment() {
     // 클래스 멤버로 추가 안전한 종료를 위함
     private lateinit var pixelThread: HandlerThread
 
+    // 타이머 업데이트용 Handler & Runnable
+    private val timerHandler = Handler(Looper.getMainLooper())
+    private var timerRunnable: Runnable? = null
+
+    // 타이머 포맷팅 함수 (시:분:초)
+    private fun formatTime(millis: Long): String {
+        val totalSeconds = millis / 1000
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return String.format("%02d:%02d:%02d", hours, minutes, seconds)
+    }
+
+    // 타이머 업데이트 시작
+    private fun startTimerUpdate() {
+        stopTimerUpdate() // 기존 타이머가 있으면 중지
+        timerRunnable = object : Runnable {
+            override fun run() {
+                if (recordingStarted && recordingStartMillis > 0) {
+                    val elapsed = System.currentTimeMillis() - recordingStartMillis
+                    fragmentBinding.captureTimer?.text = formatTime(elapsed)
+                    timerHandler.postDelayed(this, 1000) // 1초마다 업데이트
+                }
+            }
+        }
+        timerHandler.post(timerRunnable!!)
+    }
+
+    // 타이머 업데이트 중지
+    private fun stopTimerUpdate() {
+        timerRunnable?.let {
+            timerHandler.removeCallbacks(it)
+            timerRunnable = null
+        }
+    }
+
     // 후처리를 위한 로깅정보 변수
     private lateinit var logWriter: BufferedWriter
     private lateinit var logFile: File
@@ -372,6 +408,7 @@ class CustomPreviewFragment : Fragment() {
         val rawPeople = poseDetector.estimatePoses(bitmap)
 
         // 2) Single‑Pose 모델에는 boundingBox가 없으니 keyPoints로 박스 계산
+        // 로깅/오버레이용: 전체 키포인트로 박스 계산
         val peopleWithBox = rawPeople.map { person ->
             val xs = person.keyPoints.map { it.coordinate.x }
             val ys = person.keyPoints.map { it.coordinate.y }
@@ -409,20 +446,39 @@ class CustomPreviewFragment : Fragment() {
             )
         }
 
-        // 4)Auto‑Zoom 타깃 계산
+        // 4)Auto‑Zoom 타깃 계산 (상체만 사용)
         if (peopleWithBox.isNotEmpty() && autoZoom.isActive) {
             val person = peopleWithBox[0]
-            val box    = person.boundingBox!!
+            
+            // 상체 키포인트 인덱스: 머리(0-4), 어깨(5-6), 엉덩이(11-12)
+            val torsoKeyPointIndices = listOf(0, 1, 2, 3, 4, 5, 6, 11, 12)
+            val torsoKeyPoints = person.keyPoints.filterIndexed { index, _ -> 
+                index in torsoKeyPointIndices && person.keyPoints[index].score >= 0.3f
+            }
+            
+            // 상체 키포인트로만 바운딩박스 계산
+            val torsoBox = if (torsoKeyPoints.isNotEmpty()) {
+                val torsoXs = torsoKeyPoints.map { it.coordinate.x }
+                val torsoYs = torsoKeyPoints.map { it.coordinate.y }
+                val left   = torsoXs.minOrNull() ?: 0f
+                val right  = torsoXs.maxOrNull() ?: 0f
+                val top    = torsoYs.minOrNull() ?: 0f
+                val bottom = torsoYs.maxOrNull() ?: 0f
+                RectF(left, top, right, bottom)
+            } else {
+                // 상체 키포인트가 없으면 전체 박스 사용 (fallback)
+                person.boundingBox!!
+            }
 
-            // 1) confidence 0.5 이상인 포인트만 세기
+            // 1) confidence 0.3 이상인 포인트만 세기 (전체 키포인트 기준)
             val validKeyPointCount = person.keyPoints.count { it.score >= 0.3f }
 
             autoZoom.update(
                 currentZoom    = zoomLevel,
-                box            = box,
+                box            = torsoBox,  // 상체만으로 계산한 박스 사용
                 viewW          = fragmentBinding.viewFinder.width,
                 viewH          = fragmentBinding.viewFinder.height,
-                keyPointCount  = validKeyPointCount  // ‘실제 검출된’ 개수
+                keyPointCount  = validKeyPointCount  // '실제 검출된' 개수
             )?.let { newTargetZoom ->
                 // 목표가 바뀌었을 때만 애니메이터 실행
                 if (zoomAnimator == null || zoomAnimator?.isRunning == false) {
@@ -509,7 +565,6 @@ class CustomPreviewFragment : Fragment() {
             fragmentBinding.autoZoomButton.setColorFilter(
                 ContextCompat.getColor(requireContext(), android.R.color.darker_gray)
             )
-            Toast.makeText(requireContext(), "Auto-Zoom 해제", Toast.LENGTH_SHORT).show()
         }
         // 진행 중이던 자동 보간/애니메이션 정리
         zoomTarget = null
@@ -685,7 +740,8 @@ class CustomPreviewFragment : Fragment() {
                         startBasic = false   // 확장 갤러리 탭을 기본 활성화
                     }
                 findNavController().navigate(action)
-            }
+            },
+            isRecording = { isCurrentlyRecording() }
         )
 
         updateGalleryThumbnail()
@@ -740,9 +796,9 @@ class CustomPreviewFragment : Fragment() {
             findNavController().navigate(action)
         }
 
-        // (선택) 동영상 버튼은 현재 화면이 동영상이므로 눌러도 변화 없게 or 토스트만
+        // (선택) 동영상 버튼은 현재 화면이 동영상이므로 눌러도 변화 없게
         view.findViewById<View>(R.id.btn_mode_video)?.setOnClickListener {
-            Toast.makeText(requireContext(), "이미 동영상 모드입니다", Toast.LENGTH_SHORT).show()
+            // 이미 동영상 모드
         }
 
         scaleDetector = ScaleGestureDetector(requireContext(),
@@ -888,12 +944,10 @@ class CustomPreviewFragment : Fragment() {
 
         //녹화 시작 종료 버튼
         fragmentBinding.captureButton.setOnClickListener {
-            Toast.makeText(requireContext(), "버튼 눌림", Toast.LENGTH_SHORT).show()
             Log.d(TAG, "버튼 눌림")
 
             if (!recordingStarted) {
                 startRecording()
-                Toast.makeText(requireContext(), "녹화 시작", Toast.LENGTH_SHORT).show()
                 Log.d(TAG, "녹화 시작")
             } else {
                 // ✅ 디바운스: 짧은 시간 내 중복 클릭 방지
@@ -907,7 +961,6 @@ class CustomPreviewFragment : Fragment() {
                 lifecycleScope.launch {
                     stopRecording()
                 }
-                Toast.makeText(requireContext(), "녹화 중지 시도", Toast.LENGTH_SHORT).show()
                 Log.d(TAG, "녹화 중지 시도")
             }
         }
@@ -1080,8 +1133,6 @@ class CustomPreviewFragment : Fragment() {
         // 갤러리 버튼 원래 상태 저장
         galleryButtonOriginalDrawable = fragmentBinding.galleryButton.drawable
         galleryButtonOriginalClickListener = View.OnClickListener {
-            Toast.makeText(requireContext(), "갤러리로 이동", Toast.LENGTH_SHORT).show()
-
             val action = CustomPreviewFragmentDirections
                 .actionCustomPreviewFragmentToGalleryFragment(
                     args.cameraId,
@@ -1511,8 +1562,12 @@ class CustomPreviewFragment : Fragment() {
             // 🔽 기존 UI 업데이트
             fragmentBinding.captureButton.background =
                 ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_pressed)
-            fragmentBinding.captureTimer?.visibility = View.VISIBLE
-            fragmentBinding.captureTimer?.start()
+            fragmentBinding.captureTimer?.apply {
+                visibility = View.VISIBLE
+                text = "00:00:00"
+            }
+            // 타이머 업데이트 시작
+            startTimerUpdate()
 
             // 🔥 상단 우측 버튼을 '오토줌 토글' 모드로 전환
             updateTopRightButton()
@@ -1602,8 +1657,9 @@ class CustomPreviewFragment : Fragment() {
             fragmentBinding.captureButton.post {
                 fragmentBinding.captureButton.background =
                     ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_normal)
+                // 타이머 업데이트 중지
+                stopTimerUpdate()
                 fragmentBinding.captureTimer?.visibility = View.GONE
-                fragmentBinding.captureTimer?.stop()
                 fragmentBinding.captureButton.setOnTouchListener(null)
             }
 
@@ -1722,7 +1778,7 @@ class CustomPreviewFragment : Fragment() {
     private fun navigateToFrontPreview() {
         val frontId = getFrontCameraId()
         if (frontId == null) {
-            Toast.makeText(requireContext(), "전면 카메라를 찾을 수 없습니다.", Toast.LENGTH_SHORT).show()
+            Log.w(TAG, "전면 카메라를 찾을 수 없습니다.")
             return
         }
 
@@ -1776,11 +1832,6 @@ class CustomPreviewFragment : Fragment() {
                         if (autoZoom.isActive) android.R.color.holo_red_light else android.R.color.darker_gray
                     )
                 )
-                Toast.makeText(
-                    requireContext(),
-                    if (autoZoom.isActive) "Auto-Zoom 시작" else "Auto-Zoom 해제",
-                    Toast.LENGTH_SHORT
-                ).show()
             }
         }
     }
@@ -1917,7 +1968,6 @@ class CustomPreviewFragment : Fragment() {
                 startSmoothZoom(zoomLevel, 3.0f)
                 updateLensSelectorUI(true)
                 showLensHUD()
-                Toast.makeText(requireContext(), "망원 ID 없음 → 3x로 전환", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
@@ -2091,7 +2141,10 @@ class CustomPreviewFragment : Fragment() {
         zoomAnimator?.cancel()
         zoomAnimator = null
 
-        // 4) 카메라 파이프라인 프레임 리스너 중단
+        // 4) 타이머 업데이트 중지
+        stopTimerUpdate()
+
+        // 5) 카메라 파이프라인 프레임 리스너 중단
         pipeline.clearFrameListener()
 
     }
@@ -2199,7 +2252,7 @@ class CustomPreviewFragment : Fragment() {
             val bmp = Bitmap.createBitmap(sv.width, sv.height, Bitmap.Config.ARGB_8888)
             PixelCopy.request(sv, bmp, { result ->
                 if (result != PixelCopy.SUCCESS) {
-                    Toast.makeText(requireContext(), "캡처 실패($result)", Toast.LENGTH_SHORT).show()
+                    Log.e(TAG, "캡처 실패($result)")
                     return@request
                 }
 
@@ -2230,21 +2283,13 @@ class CustomPreviewFragment : Fragment() {
                                 null
                             )
                         }
-
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "사진 저장 완료!", Toast.LENGTH_SHORT).show()
-                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "사진 저장 실패", e)
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "저장 실패: ${e.message}", Toast.LENGTH_SHORT).show()
-                        }
                     }
                 }
             }, Handler(Looper.getMainLooper()))
         } catch (e: Exception) {
             Log.e(TAG, "사진 촬영 오류", e)
-            Toast.makeText(requireContext(), "사진 촬영 실패: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
