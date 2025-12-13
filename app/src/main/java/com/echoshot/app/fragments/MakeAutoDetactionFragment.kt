@@ -25,6 +25,7 @@ import com.echoshot.app.R
 import com.echoshot.app.LogFormat
 import com.echoshot.app.VideoPipeline
 import com.echoshot.app.mp4detact.LogOrchestrator
+import com.echoshot.app.mp4detact.PoseLogOrchestrator
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.chaquo.python.Python
 import kotlinx.coroutines.*
@@ -51,6 +52,9 @@ class MakeAutoDetactionFragment : DialogFragment() {
     interface Callbacks {
         fun refreshGallery() {} // 선택: 호스트에서 갤러리 새로고침 원할 때만 구현
     }
+
+    /** 추적 모드 (HIGH1은 내부적으로 유지, UI에서 숨김) */
+    enum class TrackMode { FAST, HIGH }
 
     companion object {
         private const val ARG_URI = "arg_uri"
@@ -108,13 +112,21 @@ class MakeAutoDetactionFragment : DialogFragment() {
         val originalPrefix = fileName.substringBefore("_zoomed_") + "_original_"
         val originalUri = findMediaUri(ctx, originalPrefix, "mp4")
 
-        // 기본 토글값: 인물중심 + 저사양
+        // 기본 토글값: 인물중심 + 빠른추적
         if (toggleCrop.checkedButtonId == View.NO_ID)  toggleCrop.check(R.id.btnCenterMode)
-        if (toggleTrack.checkedButtonId == View.NO_ID) toggleTrack.check(R.id.btnLowSpec)
+        if (toggleTrack.checkedButtonId == View.NO_ID) toggleTrack.check(R.id.btnFastTrack)
+
+        // 추적 모드 가져오기
+        fun getTrackMode(): TrackMode = when (toggleTrack.checkedButtonId) {
+            R.id.btnFastTrack -> TrackMode.FAST
+            R.id.btnHighSpec -> TrackMode.HIGH
+            else -> TrackMode.FAST
+        }
 
         // ETA + 버튼 라벨
         fun updateStartLabel() {
-            val isHigh = (toggleTrack.checkedButtonId == R.id.btnHighSpec)
+            val mode = getTrackMode()
+            val isHigh = mode != TrackMode.FAST
             val detectTarget =
                 if (isHigh) findMediaUri(ctx, "VID_${sessionUuid}_original_", "mp4")
                     ?: findMediaUri(ctx, "VID_${sessionUuid}_zoomed_", "mp4")
@@ -125,7 +137,11 @@ class MakeAutoDetactionFragment : DialogFragment() {
             val etaSec = if (isHigh) estimateSecondsHigh(etaMsTarget)
             else estimateSeconds(etaMsTarget)
 
-            btnStart.text = "시작 (${if (isHigh) "고사양" else "저사양"})\n예상시간: ${etaSec}초"
+            val modeLabel = when (mode) {
+                TrackMode.FAST -> "빠른추적"
+                TrackMode.HIGH -> "고성능추적"
+            }
+            btnStart.text = "시작 ($modeLabel)\n예상시간: ${etaSec}초"
         }
         updateStartLabel()
         toggleCrop.addOnButtonCheckedListener { _, _, _ -> updateStartLabel() }
@@ -138,113 +154,188 @@ class MakeAutoDetactionFragment : DialogFragment() {
                 R.id.btnWideMode   -> 4f   // 와이드 (상체 기준)
                 else               -> 3f
             }
-            val isHigh = (toggleTrack.checkedButtonId == R.id.btnHighSpec)
+            val trackMode = getTrackMode()
 
-            if (!isHigh) {
-                // ===== 저사양: 기존 로그로 즉시 크롭 =====
-                val durMs = getVideoDurationMs(ctx, baseUriToProcess)
-                showBlockingProgress(estimateSeconds(durMs))
-                lifecycleScope.launch(Dispatchers.IO) {
-                    try {
-                        val trackingUri = findMediaUri(ctx, "tracking_log_${sessionUuid}", "json")
-                        val tsUri       = findMediaUri(ctx, "tracking_log_${sessionUuid}_frame_ts", "json")
+            when (trackMode) {
+                TrackMode.FAST -> {
+                    // ===== 빠른 추적: 기존 로그로 즉시 크롭 =====
+                    val durMs = getVideoDurationMs(ctx, baseUriToProcess)
+                    showBlockingProgress(estimateSeconds(durMs))
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        try {
+                            val trackingUri = findMediaUri(ctx, "tracking_log_${sessionUuid}", "json")
+                            val tsUri       = findMediaUri(ctx, "tracking_log_${sessionUuid}_frame_ts", "json")
 
-                        // ① 로그 생성(파이썬 파이프라인)
-                        val outJson = generateLogFromSession(ctx, sessionUuid, trackingUri, tsUri, ctx.filesDir)
-                        // ② 크롭
-                        val croppedUri = cropVideoFromLog(
-                            ctx = ctx,
-                            sessionUuid = sessionUuid,
-                            outputJson = outJson,
-                            videoUriToProcess = baseUriToProcess,
-                            fps = getVideoFps(ctx, baseUriToProcess) ?: 30,
-                            paddingFactor = paddingFactor,
-                            logFormat = LogFormat.PROCESSED_JSON
-                        )
-                        withContext(Dispatchers.Main) {
-                            dismissBlockingProgress()
-                            if (croppedUri != null) {
-                                Toast.makeText(ctx, "크롭 완료!", Toast.LENGTH_SHORT).show()
-                                (parentFragment as? Callbacks ?: activity as? Callbacks)?.refreshGallery()
-                                dismissAllowingStateLoss()
-                            } else {
-                                Toast.makeText(ctx, "크롭 실패", Toast.LENGTH_SHORT).show()
+                            // ① 로그 생성(파이썬 파이프라인)
+                            val outJson = generateLogFromSession(ctx, sessionUuid, trackingUri, tsUri, ctx.filesDir)
+                            // ② 크롭
+                            val croppedUri = cropVideoFromLog(
+                                ctx = ctx,
+                                sessionUuid = sessionUuid,
+                                outputJson = outJson,
+                                videoUriToProcess = baseUriToProcess,
+                                fps = getVideoFps(ctx, baseUriToProcess) ?: 30,
+                                paddingFactor = paddingFactor,
+                                logFormat = LogFormat.PROCESSED_JSON
+                            )
+                            withContext(Dispatchers.Main) {
+                                dismissBlockingProgress()
+                                if (croppedUri != null) {
+                                    Toast.makeText(ctx, "빠른 추적 크롭 완료!", Toast.LENGTH_SHORT).show()
+                                    (parentFragment as? Callbacks ?: activity as? Callbacks)?.refreshGallery()
+                                    dismissAllowingStateLoss()
+                                } else {
+                                    Toast.makeText(ctx, "크롭 실패", Toast.LENGTH_SHORT).show()
+                                }
                             }
-                        }
-                    } catch (e: Exception) {
-                        withContext(Dispatchers.Main) {
-                            dismissBlockingProgress()
-                            AlertDialog.Builder(ctx)
-                                .setMessage("처리 중 오류가 발생했습니다:\n${e.message}")
-                                .setPositiveButton("닫기", null)
-                                .show()
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                dismissBlockingProgress()
+                                AlertDialog.Builder(ctx)
+                                    .setMessage("처리 중 오류가 발생했습니다:\n${e.message}")
+                                    .setPositiveButton("닫기", null)
+                                    .show()
+                            }
                         }
                     }
                 }
-                return@setOnClickListener
-            }
 
-            // ===== 고사양: 로그 2종 생성+병합 후 즉시 크롭 =====
-            val videoUriForDetect =
-                findMediaUri(ctx, "VID_${sessionUuid}_original_", "mp4")
-                    ?: findMediaUri(ctx, "VID_${sessionUuid}_zoomed_", "mp4")
-                    ?: baseUriToProcess
+                /* HIGH1 (YOLOv8 기반) - UI에서 숨김, 나중에 필요시 복원 가능
+                TrackMode.HIGH1 -> {
+                    // ===== 고성능 추적1: YOLOv8 기반 로그 2종 생성+병합 후 크롭 =====
+                    val videoUriForDetect =
+                        findMediaUri(ctx, "VID_${sessionUuid}_original_", "mp4")
+                            ?: findMediaUri(ctx, "VID_${sessionUuid}_zoomed_", "mp4")
+                            ?: baseUriToProcess
 
-            val trackingUri = findMediaUri(ctx, "tracking_log_${sessionUuid}", "json")
-            val tsUri       = findMediaUri(ctx, "tracking_log_${sessionUuid}_frame_ts", "json")
+                    val trackingUri = findMediaUri(ctx, "tracking_log_${sessionUuid}", "json")
+                    val tsUri       = findMediaUri(ctx, "tracking_log_${sessionUuid}_frame_ts", "json")
 
-            val durMs = getVideoDurationMs(ctx, videoUriForDetect)
-            showBlockingProgress(estimateSecondsHigh(durMs))
+                    val durMs = getVideoDurationMs(ctx, videoUriForDetect)
+                    showBlockingProgress(estimateSecondsHigh(durMs))
 
-            lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    val res = LogOrchestrator.makeBothLogsAndMerge(
-                        ctx = ctx,
-                        sessionUuid = sessionUuid,
-                        videoUriForDetect = videoUriForDetect,
-                        trackingUri = trackingUri,
-                        tsUri = tsUri,
-                        filesDir = ctx.filesDir,
-                        onStage = { stage, note -> Log.d(TAG, "stage=$stage note=$note") }
-                    )
-                    val mergedLogUri = res.mergedOutUri
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        try {
+                            val res = LogOrchestrator.makeBothLogsAndMerge(
+                                ctx = ctx,
+                                sessionUuid = sessionUuid,
+                                videoUriForDetect = videoUriForDetect,
+                                trackingUri = trackingUri,
+                                tsUri = tsUri,
+                                filesDir = ctx.filesDir,
+                                onStage = { stage, note -> Log.d(TAG, "[HIGH1] stage=$stage note=$note") }
+                            )
+                            val mergedLogUri = res.mergedOutUri
 
-                    val fpsForCrop =
-                        getVideoFps(ctx, baseUriToProcess)
-                            ?: getVideoFps(ctx, videoUriForDetect)
-                            ?: 30
+                            val fpsForCrop =
+                                getVideoFps(ctx, baseUriToProcess)
+                                    ?: getVideoFps(ctx, videoUriForDetect)
+                                    ?: 30
 
-                    val mergedFile: File = when (mergedLogUri.scheme) {
-                        "file" -> File(mergedLogUri.path!!)
-                        else   -> File(ctx.filesDir, "${sessionUuid}_merged.jsonl")
-                            .also { copyUriToFile(ctx, mergedLogUri, it) }
+                            val mergedFile: File = when (mergedLogUri.scheme) {
+                                "file" -> File(mergedLogUri.path!!)
+                                else   -> File(ctx.filesDir, "${sessionUuid}_merged.jsonl")
+                                    .also { copyUriToFile(ctx, mergedLogUri, it) }
+                            }
+
+                            @Suppress("UNUSED_VARIABLE")
+                            val outUri = VideoPipeline.processSessionFromLog(
+                                context = ctx,
+                                sessionId = sessionUuid,
+                                srcVideoUri = baseUriToProcess,
+                                fps = fpsForCrop,
+                                paddingFactor = paddingFactor,
+                                logFile = mergedFile,
+                                format = LogFormat.MERGED_JSONL
+                            )
+
+                            withContext(Dispatchers.Main) {
+                                dismissBlockingProgress()
+                                Toast.makeText(ctx, "고성능1 크롭 완료!", Toast.LENGTH_SHORT).show()
+                                (parentFragment as? Callbacks ?: activity as? Callbacks)?.refreshGallery()
+                                dismissAllowingStateLoss()
+                            }
+                        } catch (e: Throwable) {
+                            Log.e(TAG, "HIGH1 failed", e)
+                            withContext(Dispatchers.Main) {
+                                dismissBlockingProgress()
+                                AlertDialog.Builder(ctx)
+                                    .setMessage("고성능1 실패:\n${e.message}")
+                                    .setPositiveButton("닫기", null)
+                                    .show()
+                            }
+                        }
                     }
+                }
+                END OF HIGH1 BLOCK */
 
-                    @Suppress("UNUSED_VARIABLE")
-                    val outUri = VideoPipeline.processSessionFromLog(
-                        context = ctx,
-                        sessionId = sessionUuid,
-                        srcVideoUri = baseUriToProcess,
-                        fps = fpsForCrop,
-                        paddingFactor = paddingFactor,
-                        logFile = mergedFile,
-                        format = LogFormat.MERGED_JSONL
-                    )
+                TrackMode.HIGH -> {
+                    // ===== 고성능 추적2: YOLO11n-pose 기반 관절 트래킹 =====
+                    val videoUriForDetect =
+                        findMediaUri(ctx, "VID_${sessionUuid}_original_", "mp4")
+                            ?: findMediaUri(ctx, "VID_${sessionUuid}_zoomed_", "mp4")
+                            ?: baseUriToProcess
 
-                    withContext(Dispatchers.Main) {
-                        dismissBlockingProgress()
-                        Toast.makeText(ctx, "로그 2종+병합+크롭 완료!", Toast.LENGTH_SHORT).show()
-                        (parentFragment as? Callbacks ?: activity as? Callbacks)?.refreshGallery()
-                        dismissAllowingStateLoss()
-                    }
-                } catch (e: Throwable) {
-                    Log.e(TAG, "high-spec failed", e)
-                    withContext(Dispatchers.Main) {
-                        dismissBlockingProgress()
-                        AlertDialog.Builder(ctx)
-                            .setMessage("로그 생성/병합 실패:\n${e.message}")
-                            .setPositiveButton("닫기", null)
-                            .show()
+                    val trackingUri = findMediaUri(ctx, "tracking_log_${sessionUuid}", "json")
+                    val tsUri       = findMediaUri(ctx, "tracking_log_${sessionUuid}_frame_ts", "json")
+
+                    val durMs = getVideoDurationMs(ctx, videoUriForDetect)
+                    showBlockingProgress(estimateSecondsHigh(durMs))
+
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        try {
+                            val res = PoseLogOrchestrator.makePoseLogsAndMerge(
+                                ctx = ctx,
+                                sessionUuid = sessionUuid,
+                                videoUriForDetect = videoUriForDetect,
+                                trackingUri = trackingUri,
+                                tsUri = tsUri,
+                                filesDir = ctx.filesDir,
+                                onStage = { stage, note -> Log.d(TAG, "[HIGH-POSE] stage=$stage note=$note") },
+                                onProgress = { frameIdx, ptsMs -> 
+                                    if (frameIdx % 100 == 0) Log.d(TAG, "[HIGH] frame=$frameIdx pts=$ptsMs")
+                                }
+                            )
+                            val mergedLogUri = res.mergedOutUri
+
+                            val fpsForCrop =
+                                getVideoFps(ctx, baseUriToProcess)
+                                    ?: getVideoFps(ctx, videoUriForDetect)
+                                    ?: 30
+
+                            val mergedFile: File = when (mergedLogUri.scheme) {
+                                "file" -> File(mergedLogUri.path!!)
+                                else   -> File(ctx.filesDir, "${sessionUuid}_pose_merged.jsonl")
+                                    .also { copyUriToFile(ctx, mergedLogUri, it) }
+                            }
+
+                            @Suppress("UNUSED_VARIABLE")
+                            val outUri = VideoPipeline.processSessionFromLog(
+                                context = ctx,
+                                sessionId = sessionUuid,
+                                srcVideoUri = baseUriToProcess,
+                                fps = fpsForCrop,
+                                paddingFactor = paddingFactor,
+                                logFile = mergedFile,
+                                format = LogFormat.MERGED_JSONL
+                            )
+
+                            withContext(Dispatchers.Main) {
+                                dismissBlockingProgress()
+                                Toast.makeText(ctx, "고성능추적 크롭 완료!", Toast.LENGTH_SHORT).show()
+                                (parentFragment as? Callbacks ?: activity as? Callbacks)?.refreshGallery()
+                                dismissAllowingStateLoss()
+                            }
+                        } catch (e: Throwable) {
+                            Log.e(TAG, "HIGH-POSE failed", e)
+                            withContext(Dispatchers.Main) {
+                                dismissBlockingProgress()
+                                AlertDialog.Builder(ctx)
+                                    .setMessage("고성능추적 실패:\n${e.message}")
+                                    .setPositiveButton("닫기", null)
+                                    .show()
+                            }
+                        }
                     }
                 }
             }
