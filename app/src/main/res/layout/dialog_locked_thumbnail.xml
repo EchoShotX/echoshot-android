@@ -48,7 +48,7 @@
             android:text="와이드 모드"/>
     </com.google.android.material.button.MaterialButtonToggleGroup>
 
-    <!-- 3) 트래킹 성능(저사양/고사양) -->
+    <!-- 3) 트래킹 성능(빠른추적/고성능추적) -->
     <com.google.android.material.button.MaterialButtonToggleGroup
         android:id="@+id/toggleTrackMode"
         android:layout_width="0dp"
@@ -60,13 +60,14 @@
         app:singleSelection="true">
 
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnLowSpec"
+            android:id="@+id/btnFastTrack"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:textColor="@android:color/white"
-            android:text="저사양 트래킹"/>
+            android:textSize="11sp"
+            android:text="빠른추적"/>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnHighSpec"
@@ -75,7 +76,8 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:textColor="@android:color/white"
-            android:text="고사양 트래킹"/>
+            android:textSize="11sp"
+            android:text="고성능추적"/>
     </com.google.android.material.button.MaterialButtonToggleGroup>
 
     <!-- 4) 시작 (단일 버튼) -->
