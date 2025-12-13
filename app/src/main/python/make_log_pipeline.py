@@ -318,13 +318,49 @@ def process_video(
         z = e.get('zoom')
         mapped[i]['zoom'] = float(z) if z is not None else mapped[i]['zoom']
 
-        # bbox 역변환
-        raw_bbox = e.get('bbox')
-        if isinstance(raw_bbox, str):
+        # bbox 역변환 - 상체 키포인트만 사용 (머리 0-4, 어깨 5-6, 엉덩이 11-12)
+        TORSO_INDICES = [0, 1, 2, 3, 4, 5, 6, 11, 12]
+        MIN_SCORE = 0.3
+        
+        # keypoints 파싱 (문자열로 저장된 경우 JSON 파싱)
+        keypoints = e.get('keypoints')
+        if isinstance(keypoints, str):
             try:
-                raw_bbox = json.loads(raw_bbox)
+                keypoints = json.loads(keypoints)
             except Exception:
-                raw_bbox = None
+                keypoints = None
+        
+        raw_bbox = None
+        
+        # keypoints가 있으면 상체만으로 bbox 계산
+        if keypoints and isinstance(keypoints, list) and len(keypoints) >= 17:
+            torso_points = []
+            for idx in TORSO_INDICES:
+                if idx < len(keypoints):
+                    kp = keypoints[idx]
+                    if isinstance(kp, (list, tuple)) and len(kp) >= 3 and float(kp[2]) >= MIN_SCORE:
+                        torso_points.append((float(kp[0]), float(kp[1])))
+            
+            if torso_points:
+                xs = [p[0] for p in torso_points]
+                ys = [p[1] for p in torso_points]
+                x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+                
+                # 상체 bbox 중심을 아래로 이동 (위:아래 = 3:7 비율 맞추기)
+                # bbox 높이의 20%만큼 아래로 이동하면 패딩이 위 30%, 아래 70%로 배분됨
+                h = y2 - y1
+                offset = h * 0.3  # 중심을 아래로 20% 이동
+                raw_bbox = [x1, y1 + offset, x2, y2 + offset]
+        
+        # keypoints가 없거나 상체 점이 부족하면 기존 bbox 사용
+        if raw_bbox is None:
+            raw_bbox = e.get('bbox')
+            if isinstance(raw_bbox, str):
+                try:
+                    raw_bbox = json.loads(raw_bbox)
+                except Exception:
+                    raw_bbox = None
+        
         if raw_bbox:
             x1, y1, x2, y2 = (float(v) for v in raw_bbox)
             z = mapped[i]['zoom'] or 1.0
