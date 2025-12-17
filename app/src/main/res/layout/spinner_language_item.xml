@@ -7,7 +7,7 @@
     android:paddingStart="12dp"
     android:paddingEnd="12dp"
     android:textColor="#333333"
-    android:textSize="13sp"
+    android:textSize="14sp"
     android:background="@android:color/transparent"
     android:ellipsize="end"
     android:singleLine="true"/>

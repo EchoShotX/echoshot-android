@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string-array name="languages">
-        <item>한국어</item>
         <item>English</item>
+        <item>한국어</item>
     </string-array>
     
     <string-array name="language_codes">
-        <item>ko</item>
         <item>en</item>
+        <item>ko</item>
     </string-array>
 </resources>
-
