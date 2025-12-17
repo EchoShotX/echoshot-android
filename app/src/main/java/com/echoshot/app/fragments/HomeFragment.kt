@@ -88,9 +88,9 @@ class HomeFragment : Fragment() {
         // 현재 언어 설정에 맞춰 선택
         val currentLocale = AppCompatDelegate.getApplicationLocales().toLanguageTags()
         val currentIndex = when {
-            currentLocale.startsWith("ko") -> 0
-            currentLocale.startsWith("en") -> 1
-            else -> 0 // 기본값: 한국어
+            currentLocale.startsWith("en") -> 0
+            currentLocale.startsWith("ko") -> 1
+            else -> 0 // 기본값: English
         }
         binding.spinnerLanguage.setSelection(currentIndex)
 

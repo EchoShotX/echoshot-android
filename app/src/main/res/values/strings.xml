@@ -20,63 +20,63 @@
     <string name="recorder_shutdown_error">Recording stops too fast, please press longer</string>
     
     <!-- Home Fragment -->
-    <string name="shoot">촬영하기</string>
-    <string name="quick_guide">빠른 사용 가이드</string>
-    <string name="camera">카메라</string>
-    <string name="guide">가이드</string>
-    <string name="move">이동</string>
+    <string name="shoot">Start Recording</string>
+    <string name="quick_guide">Quick Guide</string>
+    <string name="camera">Camera</string>
+    <string name="guide">Guide</string>
+    <string name="move">Go</string>
     
     <!-- Buttons -->
-    <string name="auto_crop">자동 구도 생성</string>
-    <string name="manual_crop">인물 선택 구도 생성</string>
-    <string name="start">시작</string>
-    <string name="center_mode">인물중심 모드</string>
-    <string name="wide_mode">와이드 모드</string>
-    <string name="fast_track">빠른추적</string>
-    <string name="high_spec_track">고성능추적</string>
-    <string name="smaller">작게</string>
-    <string name="bigger">크게</string>
+    <string name="auto_crop">Auto Composition</string>
+    <string name="manual_crop">Manual Selection</string>
+    <string name="start">Start</string>
+    <string name="center_mode">Center</string>
+    <string name="wide_mode">Wide</string>
+    <string name="fast_track">Fast Track</string>
+    <string name="high_spec_track">High Spec</string>
+    <string name="smaller">Smaller</string>
+    <string name="bigger">Bigger</string>
     
     <!-- Dialog -->
-    <string name="premium_video">프리미엄 영상</string>
-    <string name="base_video_not_found">기준 영상을 찾을 수 없습니다.</string>
-    <string name="estimated_time">예상 약 %d초</string>
-    <string name="estimated_time_remaining">예상 약 %d초 남음</string>
-    <string name="please_wait">조금만 더 기다려주세요…</string>
-    <string name="start_with_mode">시작 (%1$s)\n예상시간: %2$d초</string>
-    <string name="fast_crop_complete">빠른 추적 크롭 완료!</string>
-    <string name="crop_failed">크롭 실패</string>
-    <string name="error_occurred">처리 중 오류가 발생했습니다</string>
-    <string name="close">닫기</string>
-    <string name="high_spec_crop_complete">고성능추적 크롭 완료!</string>
-    <string name="high_spec_failed">고성능추적 실패</string>
+    <string name="premium_video">Premium Video</string>
+    <string name="base_video_not_found">Base video not found.</string>
+    <string name="estimated_time">Est. %d sec</string>
+    <string name="estimated_time_remaining">Est. %d sec remaining</string>
+    <string name="please_wait">Please wait a moment…</string>
+    <string name="start_with_mode">Start (%1$s)\nEst: %2$d sec</string>
+    <string name="fast_crop_complete">Fast tracking complete!</string>
+    <string name="crop_failed">Crop failed</string>
+    <string name="error_occurred">An error occurred</string>
+    <string name="close">Close</string>
+    <string name="high_spec_crop_complete">High-spec tracking complete!</string>
+    <string name="high_spec_failed">High-spec tracking failed</string>
     
     <!-- Gallery -->
-    <string name="gallery">갤러리</string>
-    <string name="extended_gallery">확장 갤러리</string>
-    <string name="today">오늘</string>
-    <string name="yesterday">어제</string>
-    <string name="cannot_get_filename">파일명을 가져올 수 없습니다.</string>
-    <string name="invalid_filename">잘못된 파일명</string>
+    <string name="gallery">Gallery</string>
+    <string name="extended_gallery">Extended Gallery</string>
+    <string name="today">Today</string>
+    <string name="yesterday">Yesterday</string>
+    <string name="cannot_get_filename">Cannot get filename.</string>
+    <string name="invalid_filename">Invalid filename</string>
     
     <!-- Camera Mode -->
-    <string name="photo">사진</string>
-    <string name="video">동영상</string>
-    <string name="already_video_mode">이미 동영상 모드입니다</string>
-    <string name="already_photo_mode">이미 사진 모드입니다</string>
-    <string name="photo_saved">사진 저장 완료!</string>
-    <string name="photo_save_failed">사진 저장 실패</string>
-    <string name="photo_capture_failed">사진 촬영 실패</string>
+    <string name="photo">Photo</string>
+    <string name="video">Video</string>
+    <string name="already_video_mode">Already in video mode</string>
+    <string name="already_photo_mode">Already in photo mode</string>
+    <string name="photo_saved">Photo saved!</string>
+    <string name="photo_save_failed">Failed to save photo</string>
+    <string name="photo_capture_failed">Photo capture failed</string>
     
     <!-- Guide Dialog -->
-    <string name="guide_title_1">일반 카메라처럼 줌해서 촬영</string>
-    <string name="guide_desc_1">화면을 확대·축소하면서 원하는 구도로 동영상을 찍어주세요.</string>
-    <string name="guide_title_2">EchoShot 갤러리에서 영상 확인</string>
-    <string name="guide_desc_2">촬영한 영상과 더 넓은 구도의 영상이 저장된것을 확인하세요.</string>
-    <string name="guide_title_3">인물 중심 영상 제작</string>
-    <string name="guide_desc_3">분석 모드를 고르고 \'시작\'을 누르면 완벽한 인물 중심으로 영상을 다시 만들어요</string>
-    <string name="guide_title_4">인물만 따라가는 직캠을 감상</string>
-    <string name="guide_desc_4">분석이 끝나면 인물을 크게, 안정된 구도로 다시 볼 수 있습니다.</string>
-    <string name="next">다음</string>
-    <string name="confirm">확인</string>
+    <string name="guide_title_1">Zoom and Record Like a Regular Camera</string>
+    <string name="guide_desc_1">Pinch to zoom in/out and record your video with your desired framing.</string>
+    <string name="guide_title_2">Check Videos in EchoShot Gallery</string>
+    <string name="guide_desc_2">See both your recorded video and the wider angle version saved together.</string>
+    <string name="guide_title_3">Create Person-Centered Video</string>
+    <string name="guide_desc_3">Choose analysis mode and tap \'Start\' to recreate a perfectly person-centered video.</string>
+    <string name="guide_title_4">Enjoy Auto-Tracking Fancam</string>
+    <string name="guide_desc_4">After analysis, watch the subject enlarged with stable framing.</string>
+    <string name="next">Next</string>
+    <string name="confirm">Done</string>
 </resources>
