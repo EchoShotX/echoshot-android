@@ -9,6 +9,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import android.view.*
@@ -94,12 +95,12 @@ class MakeAutoDetactionFragment : DialogFragment() {
                         .substringBeforeLast('.')
                 else null
             } ?: run {
-            Toast.makeText(ctx, "파일명을 가져올 수 없습니다.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, getString(R.string.cannot_get_filename), Toast.LENGTH_SHORT).show()
             return AlertDialog.Builder(ctx).create()
         }
         val parts = fileName.split('_')
         if (parts.size < 2) {
-            Toast.makeText(ctx, "잘못된 파일명: $fileName", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, "${getString(R.string.invalid_filename)}: $fileName", Toast.LENGTH_SHORT).show()
             return AlertDialog.Builder(ctx).create()
         }
         val sessionUuid = parts[1]
@@ -138,10 +139,10 @@ class MakeAutoDetactionFragment : DialogFragment() {
             else estimateSeconds(etaMsTarget)
 
             val modeLabel = when (mode) {
-                TrackMode.FAST -> "빠른추적"
-                TrackMode.HIGH -> "고성능추적"
+                TrackMode.FAST -> getString(R.string.fast_track)
+                TrackMode.HIGH -> getString(R.string.high_spec_track)
             }
-            btnStart.text = "시작 ($modeLabel)\n예상시간: ${etaSec}초"
+            btnStart.text = getString(R.string.start_with_mode, modeLabel, etaSec)
         }
         updateStartLabel()
         toggleCrop.addOnButtonCheckedListener { _, _, _ -> updateStartLabel() }
@@ -181,19 +182,19 @@ class MakeAutoDetactionFragment : DialogFragment() {
                             withContext(Dispatchers.Main) {
                                 dismissBlockingProgress()
                                 if (croppedUri != null) {
-                                    Toast.makeText(ctx, "빠른 추적 크롭 완료!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(ctx, getString(R.string.fast_crop_complete), Toast.LENGTH_SHORT).show()
                                     (parentFragment as? Callbacks ?: activity as? Callbacks)?.refreshGallery()
                                     dismissAllowingStateLoss()
                                 } else {
-                                    Toast.makeText(ctx, "크롭 실패", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(ctx, getString(R.string.crop_failed), Toast.LENGTH_SHORT).show()
                                 }
                             }
                         } catch (e: Exception) {
                             withContext(Dispatchers.Main) {
                                 dismissBlockingProgress()
                                 AlertDialog.Builder(ctx)
-                                    .setMessage("처리 중 오류가 발생했습니다:\n${e.message}")
-                                    .setPositiveButton("닫기", null)
+                                    .setMessage("${getString(R.string.error_occurred)}:\n${e.message}")
+                                    .setPositiveButton(getString(R.string.close), null)
                                     .show()
                             }
                         }
@@ -251,7 +252,7 @@ class MakeAutoDetactionFragment : DialogFragment() {
 
                             withContext(Dispatchers.Main) {
                                 dismissBlockingProgress()
-                                Toast.makeText(ctx, "고성능1 크롭 완료!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(ctx, getString(R.string.high_spec_crop_complete), Toast.LENGTH_SHORT).show()
                                 (parentFragment as? Callbacks ?: activity as? Callbacks)?.refreshGallery()
                                 dismissAllowingStateLoss()
                             }
@@ -260,8 +261,8 @@ class MakeAutoDetactionFragment : DialogFragment() {
                             withContext(Dispatchers.Main) {
                                 dismissBlockingProgress()
                                 AlertDialog.Builder(ctx)
-                                    .setMessage("고성능1 실패:\n${e.message}")
-                                    .setPositiveButton("닫기", null)
+                                    .setMessage("${getString(R.string.high_spec_failed)}:\n${e.message}")
+                                    .setPositiveButton(getString(R.string.close), null)
                                     .show()
                             }
                         }
@@ -322,7 +323,7 @@ class MakeAutoDetactionFragment : DialogFragment() {
 
                             withContext(Dispatchers.Main) {
                                 dismissBlockingProgress()
-                                Toast.makeText(ctx, "고성능추적 크롭 완료!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(ctx, getString(R.string.high_spec_crop_complete), Toast.LENGTH_SHORT).show()
                                 (parentFragment as? Callbacks ?: activity as? Callbacks)?.refreshGallery()
                                 dismissAllowingStateLoss()
                             }
@@ -331,8 +332,8 @@ class MakeAutoDetactionFragment : DialogFragment() {
                             withContext(Dispatchers.Main) {
                                 dismissBlockingProgress()
                                 AlertDialog.Builder(ctx)
-                                    .setMessage("고성능추적 실패:\n${e.message}")
-                                    .setPositiveButton("닫기", null)
+                                    .setMessage("${getString(R.string.high_spec_failed)}:\n${e.message}")
+                                    .setPositiveButton(getString(R.string.close), null)
                                     .show()
                             }
                         }
@@ -395,17 +396,37 @@ class MakeAutoDetactionFragment : DialogFragment() {
     }
 
     private fun findMediaUri(context: Context, prefix: String, extension: String): Uri? {
-        val (collection, nameCol) = when (extension.lowercase()) {
-            "mp4" -> Pair(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.DISPLAY_NAME)
-            "json" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                Pair(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), MediaStore.MediaColumns.DISPLAY_NAME)
+        val (collection, nameCol, relativePath) = when (extension.lowercase()) {
+            "mp4" -> Triple(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                MediaStore.Video.Media.DISPLAY_NAME,
+                "${Environment.DIRECTORY_DCIM}/EchoShot"
+            )
+            "json", "jsonl" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                Triple(
+                    MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                    "${Environment.DIRECTORY_DOWNLOADS}/EchoShotLogs"
+                )
             else
-                Pair(MediaStore.Files.getContentUri("external"), MediaStore.MediaColumns.DISPLAY_NAME)
+                Triple(
+                    MediaStore.Files.getContentUri("external"),
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                    "${Environment.DIRECTORY_DOWNLOADS}/EchoShotLogs"
+                )
             else -> return null
         }
 
-        val sel = "$nameCol LIKE ?"
-        val selArgs = arrayOf("${prefix}%.$extension")
+        // API 29+ 에서는 RELATIVE_PATH로 폴더 필터링
+        val sel: String
+        val selArgs: Array<String>
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            sel = "$nameCol LIKE ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
+            selArgs = arrayOf("${prefix}%.$extension", "$relativePath%")
+        } else {
+            sel = "$nameCol LIKE ?"
+            selArgs = arrayOf("${prefix}%.$extension")
+        }
         val proj = arrayOf(MediaStore.MediaColumns._ID)
 
         return context.contentResolver.query(collection, proj, sel, selArgs, null)
@@ -484,7 +505,7 @@ class MakeAutoDetactionFragment : DialogFragment() {
 
         bar.visibility = View.VISIBLE
         spin.visibility = View.GONE
-        tvSubtitle.text = "예상 약 ${etaSec}초"
+        tvSubtitle.text = getString(R.string.estimated_time, etaSec)
 
         progressDialog = AlertDialog.Builder(requireContext())
             .setView(v)
@@ -506,11 +527,11 @@ class MakeAutoDetactionFragment : DialogFragment() {
                 if (elapsedSec <= etaSec && etaSec > 0) {
                     val pct = ((elapsedSec.toDouble() / etaSec) * 100).coerceIn(0.0, 99.0).toInt()
                     bar.progress = pct
-                    tvSubtitle.text = "예상 약 ${(etaSec - elapsedSec).coerceAtLeast(0)}초 남음"
+                    tvSubtitle.text = getString(R.string.estimated_time_remaining, (etaSec - elapsedSec).coerceAtLeast(0))
                 } else {
                     bar.visibility = View.GONE
                     spin.visibility = View.VISIBLE
-                    tvSubtitle.text = "조금만 더 기다려주세요…"
+                    tvSubtitle.text = getString(R.string.please_wait)
                 }
                 delay(1000)
             }

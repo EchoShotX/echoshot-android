@@ -6,13 +6,30 @@
     android:orientation="vertical"
     android:background="#FFFFFF">
 
+    <!-- 상단 언어 선택 드롭다운 -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp">
+
+        <Spinner
+            android:id="@+id/spinnerLanguage"
+            android:layout_width="100dp"
+            android:layout_height="36dp"
+            android:layout_gravity="end"
+            android:background="@drawable/spinner_bg"
+            android:dropDownWidth="100dp"
+            android:popupBackground="@drawable/spinner_dropdown_bg"/>
+    </FrameLayout>
+
     <!-- 상단 로고 -->
     <ImageView
         android:id="@+id/logo_home"
         android:layout_width="300dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
-        android:layout_marginTop="150dp"
+        android:layout_marginTop="100dp"
         android:padding="0dp"
         android:src="@drawable/ic_echoshot_logo_home"
         android:contentDescription="EchoShot Logo"
@@ -38,7 +55,7 @@
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:src="@drawable/ic_photo_camera"
-            android:contentDescription="카메라"
+            android:contentDescription="@string/camera"
             app:tint="#000000"
             android:scaleType="fitCenter" />
 
@@ -48,7 +65,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:layout_marginStart="16dp"
-            android:text="촬영하기"
+            android:text="@string/shoot"
             android:textColor="#000000"
             android:textSize="18sp"
             android:textStyle="bold" />
@@ -57,7 +74,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/arrow_back"
-            android:contentDescription="이동"
+            android:contentDescription="@string/move"
             app:tint="#000000"
             android:rotation="180"
             android:scaleType="fitCenter" />
@@ -84,7 +101,7 @@
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:src="@drawable/ic_menu_book"
-            android:contentDescription="가이드"
+            android:contentDescription="@string/guide"
             app:tint="#000000"
             android:scaleType="fitCenter" />
 
@@ -94,7 +111,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:layout_marginStart="16dp"
-            android:text="빠른 사용 가이드"
+            android:text="@string/quick_guide"
             android:textColor="#000000"
             android:textSize="18sp"
             android:textStyle="bold" />
@@ -103,7 +120,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/arrow_back"
-            android:contentDescription="이동"
+            android:contentDescription="@string/move"
             app:tint="#000000"
             android:rotation="180"
             android:scaleType="fitCenter" />

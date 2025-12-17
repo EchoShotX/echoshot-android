@@ -87,10 +87,10 @@ object VideoPipeline {
             FileOutputStream(srcVideoFile).use { out -> inp.copyTo(out) }
         }
 
-        // 3) 출력 파일 경로 (DCIM/Camera2App)
+        // 3) 출력 파일 경로 (DCIM/EchoShot)
         val dcimDir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-            "Camera2App"
+            "EchoShot"
         )
         if (!dcimDir.exists()) dcimDir.mkdirs()
         val ts = SimpleDateFormat("yyyy_MM_dd_HH_mm_ss_SSS", Locale.US).format(Date())

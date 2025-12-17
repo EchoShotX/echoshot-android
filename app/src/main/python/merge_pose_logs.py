@@ -834,11 +834,25 @@ def merge_pose_logs(
     
     # pose_log frame 범위
     pose_frames_idx = [f.get("frame", i) for i, f in enumerate(pose_frames)]
-    print(f"📊 pose_log frame 범위: {min(pose_frames_idx)} ~ {max(pose_frames_idx)}")
+    min_frame = min(pose_frames_idx) if pose_frames_idx else 0
+    max_frame = max(pose_frames_idx) if pose_frames_idx else 0
+    print(f"📊 pose_log frame 범위: {min_frame} ~ {max_frame}")
     
     # processed_map 키 범위
     if processed_map:
         print(f"📊 processed_map 키 범위: {min(processed_map.keys())} ~ {max(processed_map.keys())}")
+    
+    # 첫 프레임이 0이 아니면 경고 및 0부터 시작하도록 패딩
+    if min_frame > 0:
+        print(f"⚠️ pose_log가 frame {min_frame}부터 시작합니다. frame 0~{min_frame-1}을 패딩합니다.")
+        # 첫 프레임의 데이터를 기반으로 앞쪽 프레임 생성
+        first_pose = pose_frames[0]
+        for pad_frame in range(min_frame):
+            padded = deepcopy(first_pose)
+            padded["frame"] = pad_frame
+            padded["pts_ms"] = pad_frame * 33  # 약 30fps 가정
+            pose_frames.insert(pad_frame, padded)
+        print(f"📊 패딩 후 pose_frames 크기: {len(pose_frames)}")
     
     def get_processed_for_frame(frame_idx):
         """프레임 인덱스로 processed 데이터 가져오기"""
@@ -931,6 +945,33 @@ def merge_pose_logs(
     print(f"   - 매칭 실패: {none_count}")
     print(f"   - 유효 트래킹: {valid_tracked}/{total}")
     
+    # 3.5) 첫 프레임 zoom 불연속 보정
+    # 녹화 시작 시 zoom이 1.0이었다가 바로 변경되는 경우, 첫 몇 프레임의 crop이 이상해짐
+    # 안정적인 zoom 값 찾기 (처음 10프레임 중 가장 많이 나오는 값)
+    zoom_values = []
+    for t in tracked[:min(30, len(tracked))]:
+        if t is not None and t.get("zoom"):
+            zoom_values.append(round(t["zoom"], 2))  # 소수점 2자리로 반올림
+    
+    if zoom_values:
+        # 가장 많이 나오는 zoom 값 찾기
+        from collections import Counter
+        zoom_counter = Counter(zoom_values)
+        stable_zoom = zoom_counter.most_common(1)[0][0]
+        
+        # 첫 프레임들의 zoom이 stable_zoom과 크게 다르면 보정
+        zoom_fixed_count = 0
+        for i, t in enumerate(tracked[:10]):  # 첫 10프레임만 검사
+            if t is not None:
+                current_zoom = t.get("zoom", 1.0)
+                # zoom이 50% 이상 차이나면 보정
+                if abs(current_zoom - stable_zoom) / max(stable_zoom, 0.1) > 0.3:
+                    t["zoom"] = stable_zoom
+                    zoom_fixed_count += 1
+        
+        if zoom_fixed_count > 0:
+            print(f"⚠️ 첫 {zoom_fixed_count}개 프레임의 zoom을 {stable_zoom}으로 보정")
+    
     # 4) 초강력 노이즈 제거
     tracked = remove_spike_noise(
         tracked, key="bbox",
@@ -954,6 +995,19 @@ def merge_pose_logs(
     # 5) 크롭 박스 계산 (zoom 역변환 + 9:16)
     merged = []
     zoom_applied_count = 0
+    
+    # 첫 프레임(frame 0)이 있는지 확인
+    first_valid_idx = next((i for i, t in enumerate(tracked) if t is not None and t.get("bbox")), None)
+    if first_valid_idx is not None and tracked[first_valid_idx].get("frame", 0) > 0:
+        # frame 0이 없으면 첫 유효 프레임을 복사해서 frame 0부터 채움
+        first_frame = tracked[first_valid_idx].get("frame", 0)
+        print(f"⚠️ 첫 프레임이 frame {first_frame}입니다. frame 0~{first_frame-1}을 채웁니다.")
+        for pad_idx in range(first_frame):
+            padded = deepcopy(tracked[first_valid_idx])
+            padded["frame"] = pad_idx
+            padded["pts_ms"] = pad_idx * 33
+            tracked.insert(pad_idx, padded)
+    
     for idx, t in enumerate(tracked):
         if t is None:
             continue

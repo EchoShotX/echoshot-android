@@ -21,6 +21,7 @@ import com.google.android.material.button.MaterialButtonToggleGroup
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import android.media.MediaMetadataRetriever
+import android.os.Environment
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
@@ -432,13 +433,25 @@ class HybridPickerDialogFragment : DialogFragment() {
         prefix: String,
         extension: String
     ): Uri? {
-        val (collection, nameCol) = when (extension.lowercase()) {
-            "mp4" -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI to MediaStore.Video.Media.DISPLAY_NAME
+        val (collection, nameCol, relativePath) = when (extension.lowercase()) {
+            "mp4" -> Triple(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                MediaStore.Video.Media.DISPLAY_NAME,
+                "${Environment.DIRECTORY_DCIM}/EchoShot"
+            )
             "json", "jsonl" ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                    MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) to MediaStore.MediaColumns.DISPLAY_NAME
+                    Triple(
+                        MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                        MediaStore.MediaColumns.DISPLAY_NAME,
+                        "${Environment.DIRECTORY_DOWNLOADS}/EchoShotLogs"
+                    )
                 else
-                    MediaStore.Files.getContentUri("external") to MediaStore.MediaColumns.DISPLAY_NAME
+                    Triple(
+                        MediaStore.Files.getContentUri("external"),
+                        MediaStore.MediaColumns.DISPLAY_NAME,
+                        "${Environment.DIRECTORY_DOWNLOADS}/EchoShotLogs"
+                    )
             else -> return null
         }
 
@@ -454,8 +467,10 @@ class HybridPickerDialogFragment : DialogFragment() {
                     ContentResolver.QUERY_ARG_SORT_DIRECTION,
                     ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
                 putInt(ContentResolver.QUERY_ARG_LIMIT, 1)
-                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, "$nameCol LIKE ?")
-                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf("${prefix}%.${extension}"))
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, 
+                    "$nameCol LIKE ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?")
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, 
+                    arrayOf("${prefix}%.${extension}", "$relativePath%"))
             }
             context.contentResolver.query(collection, proj, args, null)?.use { c ->
                 if (c.moveToFirst()) {
