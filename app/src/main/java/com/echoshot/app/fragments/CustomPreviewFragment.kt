@@ -184,7 +184,7 @@ class CustomPreviewFragment : Fragment() {
 
     private val fragmentBinding get() = _fragmentBinding!!
 
-    private val pipeline: Pipeline by lazy {
+    private val _pipelineLazy = lazy {
         when (args.pipelineMode) {
             "hardware" -> CustomHardwarePipeline(
                 args.width, args.height, args.fps, args.filterOn, args.transfer,
@@ -203,6 +203,7 @@ class CustomPreviewFragment : Fragment() {
             else -> throw IllegalArgumentException("❌ 지원하지 않는 pipelineMode: ${args.pipelineMode}")
         }
     }
+    private val pipeline: Pipeline get() = _pipelineLazy.value
 
     /** AndroidX navigation arguments */
     private val args: CustomPreviewFragmentArgs by navArgs()
@@ -1704,11 +1705,11 @@ class CustomPreviewFragment : Fragment() {
                 if (this@CustomPreviewFragment::logWriter.isInitialized) {
                     logWriter.flush()
                     logWriter.close()
-                    Log.d(TAG, "📄 Tracking log saved to Downloads/Camera2App")
+                    Log.d(TAG, "📄 Tracking log saved to Downloads/EchoShotLogs")
                 }
             }
 
-            // 프레임 타임스탬프 저장 (Downloads/Camera2App에 MediaStore로 등록)
+            // 프레임 타임스탬프 저장 (Downloads/EchoShotLogs에 MediaStore로 등록)
             val gson = com.google.gson.GsonBuilder().setPrettyPrinting().create()
             val jsonArray = gson.toJson(frameTimestamps)
             val tsPrefix = "tracking_log_${sessionUuid}_frame_ts"
@@ -2113,19 +2114,21 @@ class CustomPreviewFragment : Fragment() {
     override fun onDestroy() {
         super.onDestroy()
 
-        pipeline.clearFrameListener()
-        pipeline.cleanup()
-        cameraThread.quitSafely()
-        encoderSurface.release()
-        originalencoderSurface.release()
-
+        try {
+            // pipeline이 이미 초기화된 경우에만 정리
+            if (_pipelineLazy.isInitialized()) {
+                pipeline.clearFrameListener()
+                pipeline.cleanup()
+            }
+            cameraThread.quitSafely()
+            encoderSurface.release()
+            originalencoderSurface.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during onDestroy cleanup", e)
+        }
     }
 
     override fun onDestroyView() {
-
-        _fragmentBinding = null
-        super.onDestroyView()
-
         // 1) PixelCopy 루프 중단
         if (::pixelHandler.isInitialized && ::pixelRunnable.isInitialized) {
             pixelHandler.removeCallbacks(pixelRunnable)
@@ -2144,9 +2147,14 @@ class CustomPreviewFragment : Fragment() {
         // 4) 타이머 업데이트 중지
         stopTimerUpdate()
 
-        // 5) 카메라 파이프라인 프레임 리스너 중단
-        pipeline.clearFrameListener()
+        // 5) 카메라 파이프라인 프레임 리스너 중단 (초기화된 경우에만)
+        if (_pipelineLazy.isInitialized()) {
+            pipeline.clearFrameListener()
+        }
 
+        // binding을 마지막에 null로 설정
+        _fragmentBinding = null
+        super.onDestroyView()
     }
 
     companion object {
@@ -2161,7 +2169,7 @@ class CustomPreviewFragment : Fragment() {
             val uniqueSuffix = System.nanoTime() % 100000
             val fileName = "VID_${tag}_${sdf.format(Date())}_$uniqueSuffix.$extension"
 
-            val publicDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Camera2App")
+            val publicDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "EchoShot")
             if (!publicDir.exists()) publicDir.mkdirs()
 
             val file = File(publicDir, fileName)
@@ -2186,7 +2194,7 @@ class CustomPreviewFragment : Fragment() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(
                     MediaStore.MediaColumns.RELATIVE_PATH,
-                    "${Environment.DIRECTORY_DOWNLOADS}/Camera2App"
+                    "${Environment.DIRECTORY_DOWNLOADS}/EchoShotLogs"
                 )
             }
         }
@@ -2196,7 +2204,7 @@ class CustomPreviewFragment : Fragment() {
     private fun updateGalleryThumbnail() {
         val dir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-            "Camera2App"
+            "EchoShot"
         )
 
         Log.d("ThumbDebug", "dir path = ${dir.absolutePath}, exists=${dir.exists()}")

@@ -50,7 +50,7 @@
             android:minHeight="40dp"
             android:paddingLeft="12dp"
             android:paddingRight="12dp"
-            android:text="작게"
+            android:text="@string/smaller"
             android:textColor="@android:color/white"
             android:backgroundTint="#2A2A2A"/>
 
@@ -65,7 +65,7 @@
             android:minHeight="40dp"
             android:paddingLeft="12dp"
             android:paddingRight="12dp"
-            android:text="크게"
+            android:text="@string/bigger"
             android:textColor="@android:color/white"
             android:backgroundTint="#2A2A2A"/>
     </LinearLayout>
@@ -87,8 +87,10 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:textColor="@android:color/white"
-            android:text="인물중심 모드"/>
+            android:textColor="@color/toggle_button_text"
+            app:backgroundTint="@color/toggle_button_bg"
+            app:strokeColor="@color/toggle_button_stroke"
+            android:text="@string/center_mode"/>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnWideMode"
@@ -96,8 +98,10 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:textColor="@android:color/white"
-            android:text="와이드 모드"/>
+            android:textColor="@color/toggle_button_text"
+            app:backgroundTint="@color/toggle_button_bg"
+            app:strokeColor="@color/toggle_button_stroke"
+            android:text="@string/wide_mode"/>
     </com.google.android.material.button.MaterialButtonToggleGroup>
 
     <!-- 4) 시작 (단일 버튼) -->
@@ -105,9 +109,9 @@
         android:id="@+id/startButton"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:text="시작"
-        android:backgroundTint="#FF6200EE"
-        android:textColor="@android:color/white"
+        android:text="@string/start"
+        android:backgroundTint="#90EE90"
+        android:textColor="@android:color/black"
         android:layout_marginTop="16dp"
         app:layout_constraintTop_toBottomOf="@id/toggleCropMode"
         app:layout_constraintStart_toStartOf="parent"

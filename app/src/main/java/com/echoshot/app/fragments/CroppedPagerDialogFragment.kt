@@ -113,7 +113,7 @@ class CroppedPagerDialogFragment : DialogFragment() {
             inner class VideoVH(v: View) : RecyclerView.ViewHolder(v) {
                 private val thumb = v.findViewById<ImageView>(R.id.thumb)
                 private val tvDur = v.findViewById<TextView>(R.id.tvDuration)
-                private val btn   = v.findViewById<MaterialButton>(R.id.btnPlay)
+                private val btn   = v.findViewById<ImageView>(R.id.btnPlay)
 
                 fun bind(p: Page.Video) {
                     Glide.with(thumb).load(p.uri).centerCrop().into(thumb)
@@ -157,13 +157,13 @@ class CroppedPagerDialogFragment : DialogFragment() {
                             } else null
 
                     if (base == null || fileName == null) {
-                        Toast.makeText(requireContext(), "기준 영상을 찾을 수 없습니다.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), getString(R.string.base_video_not_found), Toast.LENGTH_SHORT).show()
                         return
                     }
 
                     val parts = fileName.split('_')
                     if (parts.size < 2) {
-                        Toast.makeText(requireContext(), "잘못된 파일명: $fileName", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), "${getString(R.string.invalid_filename)}: $fileName", Toast.LENGTH_SHORT).show()
                         return
                     }
                     val sessionUuid = parts[1]
@@ -262,7 +262,7 @@ class CroppedPagerDialogFragment : DialogFragment() {
         // 초기 상태: ETA 기반 가변 진행률
         bar.visibility = View.VISIBLE
         spin.visibility = View.GONE
-        tvSubtitle.text = "예상 약 ${etaSec}초"
+        tvSubtitle.text = getString(R.string.estimated_time, etaSec)
 
         progressDialog = android.app.AlertDialog.Builder(requireContext())
             .setView(v)
@@ -290,12 +290,12 @@ class CroppedPagerDialogFragment : DialogFragment() {
                     val pct = ((elapsedSec.toDouble() / etaSec) * 100).coerceIn(0.0, 99.0).toInt()
                     bar.progress = pct
                     val remain = (etaSec - elapsedSec).coerceAtLeast(0)
-                    tvSubtitle.text = "예상 약 ${remain}초 남음"
+                    tvSubtitle.text = getString(R.string.estimated_time_remaining, remain)
                 } else {
                     // ETA 초과 → 무한 로딩으로
                     bar.visibility = View.GONE
                     spin.visibility = View.VISIBLE
-                    tvSubtitle.text = "조금만 더 기다려주세요…"
+                    tvSubtitle.text = getString(R.string.please_wait)
                 }
                 delay(1000)
             }

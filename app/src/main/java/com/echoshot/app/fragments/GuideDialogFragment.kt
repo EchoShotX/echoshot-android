@@ -25,30 +25,30 @@ class GuideDialogFragment : DialogFragment() {
 
     private data class GuidePage(
         val imageResId: Int,
-        val title: String,
-        val description: String
+        val titleResId: Int,
+        val descriptionResId: Int
     )
 
     private val guidePages = listOf(
         GuidePage(
             R.drawable.guide_sample_1,
-            "일반 카메라처럼 줌해서 촬영",
-            "화면을 확대·축소하면서 원하는 구도로 동영상을 찍어주세요."
+            R.string.guide_title_1,
+            R.string.guide_desc_1
         ),
         GuidePage(
             R.drawable.guide_sample_2,
-            "EchoShot 갤러리에서 영상 확인",
-            "촬영한 영상과 더 넓은 구도의 영상이 저장된것을 확인하세요."
+            R.string.guide_title_2,
+            R.string.guide_desc_2
         ),
         GuidePage(
             R.drawable.guide_sample_3,
-            "인물 중심 영상 제작",
-            "분석 모드를 고르고 '시작'을 누르면 완벽한 인물 중심으로 영상을 다시 만들어요"
+            R.string.guide_title_3,
+            R.string.guide_desc_3
         ),
         GuidePage(
             R.drawable.guide_sample_4,
-            "인물만 따라가는 직캠을 감상",
-            "분석이 끝나면 인물을 크게, 안정된 구도로 다시 볼 수 있습니다."
+            R.string.guide_title_4,
+            R.string.guide_desc_4
         )
     )
 
@@ -138,9 +138,9 @@ class GuideDialogFragment : DialogFragment() {
 
     private fun updateButtonText(button: Button, currentPage: Int, totalPages: Int) {
         button.text = if (currentPage == totalPages - 1) {
-            "확인"
+            getString(R.string.confirm)
         } else {
-            "다음"
+            getString(R.string.next)
         }
     }
 
@@ -166,8 +166,8 @@ class GuideDialogFragment : DialogFragment() {
 
             fun bind(page: GuidePage) {
                 imageView.setImageResource(page.imageResId)
-                titleView.text = page.title
-                descriptionView.text = page.description
+                titleView.text = itemView.context.getString(page.titleResId)
+                descriptionView.text = itemView.context.getString(page.descriptionResId)
             }
         }
     }

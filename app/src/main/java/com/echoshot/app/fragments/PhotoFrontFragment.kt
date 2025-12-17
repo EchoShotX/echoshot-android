@@ -441,7 +441,7 @@ class PhotoFrontFragment : Fragment() {
 
         val dir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-            "Camera2App"
+            "EchoShot"
         )
         val videoFiles = dir.listFiles { f -> f.extension.equals("mp4", true) }
             ?.sortedByDescending { it.lastModified() }
@@ -523,7 +523,7 @@ class PhotoFrontFragment : Fragment() {
                 }
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    Toast.makeText(requireContext(), "사진 저장 완료!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), getString(R.string.photo_saved), Toast.LENGTH_SHORT).show()
                 }
             }
         )

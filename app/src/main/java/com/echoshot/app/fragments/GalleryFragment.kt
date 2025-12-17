@@ -296,7 +296,7 @@ class GalleryFragment : Fragment() {
             MediaStore.Video.Media.DATA
         )
         val videoSel = "${MediaStore.Video.Media.DATA} LIKE ?"
-        val videoSelArgs = arrayOf("%/DCIM/Camera2App/%")
+        val videoSelArgs = arrayOf("%/DCIM/EchoShot/%")
         val videoSort = "${MediaStore.Video.Media.DATE_TAKEN} DESC"
 
         requireContext().contentResolver.query(
@@ -322,8 +322,8 @@ class GalleryFragment : Fragment() {
             MediaStore.Images.Media.DATE_TAKEN,
             MediaStore.Images.Media.DATA
         )
-        val imageSel = "${MediaStore.Images.Media.DATA} LIKE ? OR ${MediaStore.Images.Media.DATA} LIKE ?"
-        val imageSelArgs = arrayOf("%/DCIM/Camera2App/%", "%/DCIM/EchoShot/%")
+        val imageSel = "${MediaStore.Images.Media.DATA} LIKE ?"
+        val imageSelArgs = arrayOf("%/DCIM/EchoShot/%")
         val imageSort = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
 
         requireContext().contentResolver.query(
@@ -376,7 +376,7 @@ class GalleryFragment : Fragment() {
         // 기존: val sel = "${MediaStore.Video.Media.DATA} LIKE ?"
         // ↓ 전면(파일명 시작이 VID_front_)을 제외
         val sel = "${MediaStore.Video.Media.DATA} LIKE ? AND ${MediaStore.Video.Media.DISPLAY_NAME} NOT LIKE ?"
-        val selArgs = arrayOf("%/DCIM/Camera2App/%", "VID_front_%")
+        val selArgs = arrayOf("%/DCIM/EchoShot/%", "VID_front_%")
 
         val sort = "${MediaStore.Video.Media.DATE_TAKEN} DESC"
 
@@ -412,8 +412,8 @@ class GalleryFragment : Fragment() {
         val sections = linkedMapOf<String, MutableList<MediaItem>>()
         items.forEach { mi ->
             val label = when {
-                mi.dateTaken >= todayStart     -> "오늘"
-                mi.dateTaken >= yesterdayStart -> "어제"
+                mi.dateTaken >= todayStart     -> getString(R.string.today)
+                mi.dateTaken >= yesterdayStart -> getString(R.string.yesterday)
                 else                            -> sdf.format(Date(mi.dateTaken))
             }
             sections.getOrPut(label) { mutableListOf() } += mi
@@ -505,12 +505,12 @@ class GalleryFragment : Fragment() {
             ?.use { c -> if (c.moveToFirst())
                 c.getString(c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME))
                     .substringBeforeLast('.') else null } ?: run {
-            Toast.makeText(requireContext(), "파일명을 가져올 수 없습니다.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.cannot_get_filename), Toast.LENGTH_SHORT).show()
             return
         }
         val parts = fileName.split('_')
         if (parts.size < 2) {
-            Toast.makeText(requireContext(), "잘못된 파일명: $fileName", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "${getString(R.string.invalid_filename)}: $fileName", Toast.LENGTH_SHORT).show()
             return
         }
         val sessionUuid = parts[1]

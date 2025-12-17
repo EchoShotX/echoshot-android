@@ -26,15 +26,13 @@
         android:textColor="@android:color/white"
         android:textSize="12sp"/>
 
-    <com.google.android.material.button.MaterialButton
+    <ImageView
         android:id="@+id/btnPlay"
-        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
         android:layout_gravity="center"
-        android:text="재생"
-        app:icon="@drawable/ic_play_circle"
-        app:iconPadding="8dp"
-        app:iconGravity="textStart"/>
+        android:src="@drawable/ic_play_circle"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        app:tint="#ffffff"/>
 
 </FrameLayout>

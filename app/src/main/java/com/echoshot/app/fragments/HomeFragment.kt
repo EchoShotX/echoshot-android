@@ -14,6 +14,10 @@ import android.util.Size
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import com.echoshot.app.R
@@ -38,6 +42,9 @@ class HomeFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // 언어 선택 스피너 설정
+        setupLanguageSpinner()
+
         // 네비게이션 바 설정
         setupBottomNavigationBar(
             currentPage = "home",
@@ -60,6 +67,46 @@ class HomeFragment : Fragment() {
         binding.guideBox.setOnClickListener {
             GuideDialogFragment.newInstance()
                 .show(parentFragmentManager, "guideDialog")
+        }
+    }
+
+    private fun setupLanguageSpinner() {
+        val languages = resources.getStringArray(R.array.languages)
+        val languageCodes = resources.getStringArray(R.array.language_codes)
+
+        val adapter = ArrayAdapter(
+            requireContext(),
+            R.layout.spinner_language_item,
+            R.id.spinnerText,
+            languages
+        ).apply {
+            setDropDownViewResource(R.layout.spinner_language_dropdown)
+        }
+
+        binding.spinnerLanguage.adapter = adapter
+
+        // 현재 언어 설정에 맞춰 선택
+        val currentLocale = AppCompatDelegate.getApplicationLocales().toLanguageTags()
+        val currentIndex = when {
+            currentLocale.startsWith("ko") -> 0
+            currentLocale.startsWith("en") -> 1
+            else -> 0 // 기본값: 한국어
+        }
+        binding.spinnerLanguage.setSelection(currentIndex)
+
+        binding.spinnerLanguage.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val selectedCode = languageCodes[position]
+                val currentCode = AppCompatDelegate.getApplicationLocales().toLanguageTags()
+                
+                // 현재 언어와 다를 때만 변경
+                if (!currentCode.startsWith(selectedCode)) {
+                    val localeList = LocaleListCompat.forLanguageTags(selectedCode)
+                    AppCompatDelegate.setApplicationLocales(localeList)
+                }
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
     }
 

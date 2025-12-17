@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EchoShotX</string>
+    <string name="capture">Capture</string>
+    <string name="error_file_not_found">Recorded file not found</string>
+    <string name="recorder_shutdown_error">Recording stops too fast, please press longer</string>
+    
+    <!-- Home Fragment -->
+    <string name="shoot">Start Recording</string>
+    <string name="quick_guide">Quick Guide</string>
+    <string name="camera">Camera</string>
+    <string name="guide">Guide</string>
+    <string name="move">Go</string>
+    
+    <!-- Buttons -->
+    <string name="auto_crop">Auto Composition</string>
+    <string name="manual_crop">Manual Selection</string>
+    <string name="start">Start</string>
+    <string name="center_mode">Center</string>
+    <string name="wide_mode">Wide</string>
+    <string name="fast_track">Fast Track</string>
+    <string name="high_spec_track">High Spec</string>
+    <string name="smaller">Smaller</string>
+    <string name="bigger">Bigger</string>
+    
+    <!-- Dialog -->
+    <string name="premium_video">Premium Video</string>
+    <string name="base_video_not_found">Base video not found.</string>
+    <string name="estimated_time">Est. %d sec</string>
+    <string name="estimated_time_remaining">Est. %d sec remaining</string>
+    <string name="please_wait">Please wait a moment…</string>
+    <string name="start_with_mode">Start (%1$s)\nEst: %2$d sec</string>
+    <string name="fast_crop_complete">Fast tracking complete!</string>
+    <string name="crop_failed">Crop failed</string>
+    <string name="error_occurred">An error occurred</string>
+    <string name="close">Close</string>
+    <string name="high_spec_crop_complete">High-spec tracking complete!</string>
+    <string name="high_spec_failed">High-spec tracking failed</string>
+    
+    <!-- Gallery -->
+    <string name="gallery">Gallery</string>
+    <string name="extended_gallery">Extended Gallery</string>
+    <string name="today">Today</string>
+    <string name="yesterday">Yesterday</string>
+    <string name="cannot_get_filename">Cannot get filename.</string>
+    <string name="invalid_filename">Invalid filename</string>
+    
+    <!-- Camera Mode -->
+    <string name="photo">Photo</string>
+    <string name="video">Video</string>
+    <string name="already_video_mode">Already in video mode</string>
+    <string name="already_photo_mode">Already in photo mode</string>
+    <string name="photo_saved">Photo saved!</string>
+    <string name="photo_save_failed">Failed to save photo</string>
+    <string name="photo_capture_failed">Photo capture failed</string>
+    
+    <!-- Guide Dialog -->
+    <string name="guide_title_1">Zoom and Record Like a Regular Camera</string>
+    <string name="guide_desc_1">Pinch to zoom in/out and record your video with your desired framing.</string>
+    <string name="guide_title_2">Check Videos in EchoShot Gallery</string>
+    <string name="guide_desc_2">See both your recorded video and the wider angle version saved together.</string>
+    <string name="guide_title_3">Create Person-Centered Video</string>
+    <string name="guide_desc_3">Choose analysis mode and tap \'Start\' to recreate a perfectly person-centered video.</string>
+    <string name="guide_title_4">Enjoy Auto-Tracking Fancam</string>
+    <string name="guide_desc_4">After analysis, watch the subject enlarged with stable framing.</string>
+    <string name="next">Next</string>
+    <string name="confirm">Done</string>
+</resources>
+

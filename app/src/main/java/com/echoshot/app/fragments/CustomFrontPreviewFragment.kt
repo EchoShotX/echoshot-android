@@ -493,7 +493,7 @@ class CustomFrontPreviewFragment : Fragment() {
 
         // (선택) 동영상 버튼은 현재 화면이 동영상이므로 눌러도 변화 없게 or 토스트만
         fragmentBinding.btnModeVideo.setOnClickListener {
-            Toast.makeText(requireContext(), "이미 동영상 모드입니다", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.already_video_mode), Toast.LENGTH_SHORT).show()
         }
 
         // 갤러리 버튼 원래 상태 저장
@@ -1104,7 +1104,7 @@ class CustomFrontPreviewFragment : Fragment() {
     private fun updateGalleryThumbnail() {
         val dir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-            "Camera2App"
+            "EchoShot"
         )
         val videoFiles = dir.listFiles { f -> f.extension.equals("mp4", true) }
             ?.sortedByDescending { it.lastModified() }
@@ -1176,7 +1176,7 @@ class CustomFrontPreviewFragment : Fragment() {
                         }
 
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "사진 저장 완료!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), getString(R.string.photo_saved), Toast.LENGTH_SHORT).show()
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "사진 저장 실패", e)
@@ -1188,7 +1188,7 @@ class CustomFrontPreviewFragment : Fragment() {
             }, Handler(Looper.getMainLooper()))
         } catch (e: Exception) {
             Log.e(TAG, "사진 촬영 오류", e)
-            Toast.makeText(requireContext(), "사진 촬영 실패: ${e.message}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "${getString(R.string.photo_capture_failed)}: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
     
@@ -1197,7 +1197,7 @@ class CustomFrontPreviewFragment : Fragment() {
         private const val RECORDER_VIDEO_BITRATE: Int = 10_000_000
         private const val MIN_REQUIRED_RECORDING_TIME_MILLIS: Long = 1000L
 
-        // ✅ 후면과 동일하게 DCIM/Camera2App에 저장 + 확장자 버그 수정
+        // ✅ 후면과 동일하게 DCIM/EchoShot에 저장 + 확장자 버그 수정
         private fun createFile(context: Context, extension: String): File {
             val sdf = SimpleDateFormat("yyyy_MM_dd_HH_mm_ss_SSS", Locale.US)
             val fileName = "VID_front_${sdf.format(Date())}.$extension"   // ⬅️ ".{$extension}" → ".$extension"
@@ -1206,7 +1206,7 @@ class CustomFrontPreviewFragment : Fragment() {
                 android.os.Environment.getExternalStoragePublicDirectory(
                     android.os.Environment.DIRECTORY_DCIM
                 ),
-                "Camera2App"
+                "EchoShot"
             )
             if (!publicDir.exists()) publicDir.mkdirs()
 
