@@ -104,11 +104,12 @@ println "OpenCV: " +openCVersionName + " " + project.buildscript.sourceFile
 
 android {
     namespace 'org.opencv'
-    compileSdkVersion 34
+    compileSdkVersion 35
+    ndkVersion "28.0.12674087"  // 16KB 페이지 크기 지원을 위한 NDK r28
 
     defaultConfig {
         minSdkVersion 21
-        targetSdkVersion 34
+        targetSdkVersion 35
 
         versionCode openCVersionCode
         versionName openCVersionName
