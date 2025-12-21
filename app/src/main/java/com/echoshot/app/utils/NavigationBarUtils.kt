@@ -39,6 +39,7 @@ object NavigationBarUtils {
         val navHome = rootView.findViewById<ImageView>(R.id.nav_home)
         val navGallery = rootView.findViewById<ImageView>(R.id.nav_gallery)
         val navCamera = rootView.findViewById<ImageView>(R.id.nav_camera)
+        val navProfile = rootView.findViewById<ImageView>(R.id.nav_profile)
         val navBarBackground = rootView.findViewById<View>(R.id.nav_bar_background)
         
         // 기본 색상 - 검은색
@@ -46,14 +47,17 @@ object NavigationBarUtils {
         navHome?.imageTintList = ColorStateList.valueOf(iconColor)
         navGallery?.imageTintList = ColorStateList.valueOf(iconColor)
         navCamera?.imageTintList = ColorStateList.valueOf(iconColor)
+        navProfile?.imageTintList = ColorStateList.valueOf(iconColor)
         
         // 촬영 모드에서 초기 상태 설정
         if (currentPage == "camera") {
             // 카메라 버튼만 보이고, 바 배경은 카메라 버튼 크기
             navGallery?.visibility = View.GONE
             navHome?.visibility = View.GONE
+            navProfile?.visibility = View.GONE
             navGallery?.translationX = 0f
             navHome?.translationX = 0f
+            navProfile?.translationX = 0f
             navBarBackground?.let {
                 val params = it.layoutParams
                 params.width = it.dpToPx(48)
@@ -61,9 +65,11 @@ object NavigationBarUtils {
             }
             isExpanded = false
         } else {
-            // 갤러리/홈에서는 항상 펼쳐진 상태 (화면의 95%)
+            // 갤러리/홈/프로필에서는 항상 펼쳐진 상태 (화면의 95%)
+            // 5등분 구조: 갤러리 | placeholder | 카메라 | 프로필 | 홈
             navGallery?.visibility = View.VISIBLE
             navHome?.visibility = View.VISIBLE
+            navProfile?.visibility = View.VISIBLE
             navBarBackground?.let {
                 val screenWidth = it.resources.displayMetrics.widthPixels
                 val expandedWidth = (screenWidth * 0.95f).toInt()
@@ -71,10 +77,12 @@ object NavigationBarUtils {
                 params.width = expandedWidth
                 it.layoutParams = params
                 
-                // 버튼 위치 계산: 바 너비의 1/4 지점에 버튼 배치
-                val buttonOffset = expandedWidth / 3f
-                navGallery?.translationX = -buttonOffset
-                navHome?.translationX = buttonOffset
+                // 버튼 위치 계산: 5등분 구조
+                // 갤러리: -2/5, 프로필: +1/5, 홈: +2/5
+                val oneFifth = expandedWidth / 5f
+                navGallery?.translationX = -oneFifth * 2f
+                navProfile?.translationX = oneFifth
+                navHome?.translationX = oneFifth * 2f
             }
             isExpanded = true
         }
@@ -95,8 +103,8 @@ object NavigationBarUtils {
                     return@setOnClickListener
                 }
                 
-                // 펼치기/접기 애니메이션
-                toggleNavigationBar(navBarBackground, navGallery, navHome)
+                // 펼치기/접기 애니메이션 (5등분 구조: 갤러리-프로필-홈)
+                toggleNavigationBar(navBarBackground, navGallery, navHome, navProfile)
             } else {
                 // 다른 페이지에서 카메라로 이동
                 onCameraClick?.invoke()
@@ -109,17 +117,25 @@ object NavigationBarUtils {
                 onHomeClick?.invoke()
             }
         }
+        
+        // 프로필 클릭
+        navProfile?.setOnClickListener {
+            if (currentPage != "profile") {
+                onProfileClick?.invoke()
+            }
+        }
     }
     
     /**
      * 네비게이션 바 펼치기/접기 애니메이션
      * - 하얀색 바가 가운데서 양옆으로 펼쳐지고
-     * - 갤러리(왼쪽), 홈(오른쪽) 버튼이 나타남
+     * - 5등분 구조: 갤러리(-2/5) | placeholder | 카메라(0) | 프로필(+1/5) | 홈(+2/5)
      */
     private fun toggleNavigationBar(
         navBarBackground: View?,
         navGallery: ImageView?,
-        navHome: ImageView?
+        navHome: ImageView?,
+        navProfile: ImageView?
     ) {
         if (navBarBackground == null) return
         
@@ -128,8 +144,8 @@ object NavigationBarUtils {
         val screenWidth = navBarBackground.resources.displayMetrics.widthPixels
         val expandedWidth = (screenWidth * 0.95f).toInt()
         
-        // 버튼이 이동할 거리 계산 (바 너비의 1/3 지점)
-        val buttonOffset = expandedWidth / 3f
+        // 버튼이 이동할 거리 계산 (5등분 구조)
+        val oneFifth = expandedWidth / 5f
         
         if (isExpanded) {
             // 접기 애니메이션
@@ -150,6 +166,15 @@ object NavigationBarUtils {
                 ?.translationX(0f)
                 ?.setDuration(200)
                 ?.withEndAction { navHome.visibility = View.GONE }
+                ?.start()
+            
+            navProfile?.animate()
+                ?.alpha(0f)
+                ?.scaleX(0.5f)
+                ?.scaleY(0.5f)
+                ?.translationX(0f)
+                ?.setDuration(200)
+                ?.withEndAction { navProfile.visibility = View.GONE }
                 ?.start()
             
             // 2. 바 배경 줄이기
@@ -180,7 +205,7 @@ object NavigationBarUtils {
                 start()
             }
             
-            // 2. 버튼들 가운데서 양끝으로 이동하면서 페이드인
+            // 2. 버튼들 가운데서 배치 위치로 이동하면서 페이드인
             navGallery?.apply {
                 visibility = View.VISIBLE
                 alpha = 0f
@@ -191,7 +216,7 @@ object NavigationBarUtils {
                     .alpha(1f)
                     .scaleX(1f)
                     .scaleY(1f)
-                    .translationX(-buttonOffset)
+                    .translationX(-oneFifth * 2f)
                     .setDuration(300)
                     .setStartDelay(100)
                     .setInterpolator(OvershootInterpolator(1.2f))
@@ -208,7 +233,24 @@ object NavigationBarUtils {
                     .alpha(1f)
                     .scaleX(1f)
                     .scaleY(1f)
-                    .translationX(buttonOffset)
+                    .translationX(oneFifth * 2f)
+                    .setDuration(300)
+                    .setStartDelay(100)
+                    .setInterpolator(OvershootInterpolator(1.2f))
+                    .start()
+            }
+            
+            navProfile?.apply {
+                visibility = View.VISIBLE
+                alpha = 0f
+                scaleX = 0.5f
+                scaleY = 0.5f
+                translationX = 0f
+                animate()
+                    .alpha(1f)
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .translationX(oneFifth)
                     .setDuration(300)
                     .setStartDelay(100)
                     .setInterpolator(OvershootInterpolator(1.2f))

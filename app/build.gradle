@@ -8,13 +8,15 @@ apply plugin: 'com.chaquo.python'
 
 android {
     compileSdkVersion 35
+    ndkVersion "28.0.12674087"  // 16KB 페이지 크기 지원을 위한 NDK r28
+    
     defaultConfig {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         applicationId "com.echoshot.app"
         minSdkVersion 26
         targetSdkVersion 35
-        versionCode 8
-        versionName "1.0.7"
+        versionCode 13
+        versionName "1.1.2"
 
         ndk {
             abiFilters "arm64-v8a", "armeabi-v7a" // , "x86", "x86_64"
@@ -108,6 +110,15 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.3.4'
 
+    // Custom Tabs 지원 (소셜 로그인용)
+    implementation 'androidx.browser:browser:1.7.0'
+    
+    // HTTP 통신 (Retrofit, OkHttp)
+    implementation 'com.squareup.retrofit2:retrofit:2.9.0'
+    implementation 'com.squareup.retrofit2:converter-gson:2.9.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.squareup.okhttp3:logging-interceptor:4.12.0'
+
     // App compat and UI things
     implementation 'androidx.appcompat:appcompat:1.1.0'
     implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.5.0'
@@ -120,8 +131,8 @@ dependencies {
     // SwipeRefreshLayout
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
 
-    // EGL compat
-    implementation 'androidx.graphics:graphics-core:1.0.0-alpha05'
+    // EGL compat (16KB 지원 버전)
+    implementation 'androidx.graphics:graphics-core:1.0.2'
     // implementation 'com.google.ar:core:1.50.0' // ARCore 사용하지 않음 - 제거하여 크기 감소
     // implementation 'com.google.ai.edge.litert:litert-gpu:1.4.0'
 
@@ -130,14 +141,19 @@ dependencies {
     implementation "androidx.navigation:navigation-fragment-ktx:$nav_version"
     implementation "androidx.navigation:navigation-ui-ktx:$nav_version"
 
-    // tensorflow library (버전 통일)
-    // tensorflow library
-    implementation 'org.tensorflow:tensorflow-lite:2.13.0'
-    implementation 'org.tensorflow:tensorflow-lite-gpu:2.13.0'
-    implementation 'org.tensorflow:tensorflow-lite-task-vision:0.4.4'
-    implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
-    implementation "org.tensorflow:tensorflow-lite-gpu-api:2.13.0"
-    // implementation "org.tensorflow:tensorflow-lite-select-tf-ops:2.13.0" // 사용하지 않음 - 제거하여 크기 감소
+    // tensorflow library (16KB 페이지 크기 지원 버전)
+    //implementation 'org.tensorflow:tensorflow-lite:2.16.1'
+    //implementation 'org.tensorflow:tensorflow-lite-gpu:2.16.1'
+    //implementation 'org.tensorflow:tensorflow-lite-task-vision:0.4.4'
+    //implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
+    //implementation "org.tensorflow:tensorflow-lite-gpu-api:2.16.1"
+    // implementation "org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1" // 사용하지 않음 - 제거하여 크기 감소
+
+    // 기존 org.tensorflow 관련 항목을 모두 제거하고 아래로 교체
+    implementation 'com.google.ai.edge.litert:litert:1.4.0'
+    implementation 'com.google.ai.edge.litert:litert-gpu:1.4.0'
+    implementation 'com.google.ai.edge.litert:litert-support:1.4.0'
+    implementation 'com.google.ai.edge.litert:litert-api:1.4.0'
 
 
     //gson
@@ -152,14 +168,15 @@ dependencies {
     implementation "androidx.viewpager2:viewpager2:1.0.0"
     implementation "com.google.android.material:material:1.12.0"
 
-    // ★ CameraX — 모두 명시 버전(PreviewView는 camera-view에 포함)
-    implementation 'androidx.camera:camera-core:1.3.3'
-    implementation 'androidx.camera:camera-camera2:1.3.3'
-    implementation 'androidx.camera:camera-lifecycle:1.3.3'
-    implementation 'androidx.camera:camera-view:1.3.3'
+    // ★ CameraX — 16KB 지원 버전
+    implementation 'androidx.camera:camera-core:1.4.1'
+    implementation 'androidx.camera:camera-camera2:1.4.1'
+    implementation 'androidx.camera:camera-lifecycle:1.4.1'
+    implementation 'androidx.camera:camera-view:1.4.1'
     // implementation 'androidx.camera:camera-extensions:1.3.3' // 사용하지 않음 - 제거하여 크기 감소
 
     implementation project(':opencv') // <- 임포트한 OpenCV 모듈명
-    implementation "org.pytorch:pytorch_android_lite:2.1.0"
-    implementation "org.pytorch:pytorch_android_torchvision_lite:2.1.0"
+    // PyTorch - 사용하지 않음, 16KB 미지원으로 제거
+    // implementation "org.pytorch:pytorch_android_lite:2.1.0"
+    // implementation "org.pytorch:pytorch_android_torchvision_lite:2.1.0"
 }

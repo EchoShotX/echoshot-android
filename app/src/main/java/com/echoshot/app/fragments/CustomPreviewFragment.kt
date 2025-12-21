@@ -742,6 +742,11 @@ class CustomPreviewFragment : Fragment() {
                     }
                 findNavController().navigate(action)
             },
+            onProfileClick = {
+                // 카메라에서 프로필로 이동
+                val action = CustomPreviewFragmentDirections.actionCustomPreviewFragmentToProfileFragment()
+                findNavController().navigate(action)
+            },
             isRecording = { isCurrentlyRecording() }
         )
 
@@ -932,7 +937,10 @@ class CustomPreviewFragment : Fragment() {
                         val y = event.y / fragmentBinding.viewFinder.height
                         triggerFocusAtPoint(x, y)
 
-                        if (!isCurrentlyRecording() && !autoZoom.isActive) showLensHUD()
+                        // 망원 카메라를 찾을 수 있을 때만 렌즈 버튼 표시
+                        if (!isCurrentlyRecording() && !autoZoom.isActive && getBackTelePhysicalId() != null) {
+                            showLensHUD()
+                        }
                     }
 
                     longPressFired = false
@@ -1158,10 +1166,20 @@ class CustomPreviewFragment : Fragment() {
         fragmentBinding.galleryButton.setOnClickListener(galleryButtonOriginalClickListener)
         //오토줌과 전면 렌즈 변경 버튼 표시
         updateTopRightButton()
-        //진입시 렌즈 선택 버튼 표시
-        showLensHUD()
-        // 렌즈 스위칭 로직 바인딩
-        bindLensButtons()
+        
+        // 망원 카메라 사용 가능 여부 확인
+        val telePhysicalId = getBackTelePhysicalId()
+        if (telePhysicalId != null) {
+            // 망원 카메라를 찾을 수 있으면 렌즈 전환 버튼 표시
+            //진입시 렌즈 선택 버튼 표시
+            showLensHUD()
+            // 렌즈 스위칭 로직 바인딩
+            bindLensButtons()
+        } else {
+            // 망원 카메라를 찾을 수 없으면 렌즈 전환 버튼 숨기기
+            fragmentBinding.lensSelector.visibility = View.GONE
+        }
+        
         //줌 슬라이터 값 변경
         lensMode = if (isTeleCurrent()) LensMode.TELE else LensMode.WIDE
         fragmentBinding.zoomLevelText.text = displayLabelFor(zoomLevel)

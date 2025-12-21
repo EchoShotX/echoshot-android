@@ -4,6 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Permission declarations -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" tools:node="remove"/>
@@ -16,8 +17,9 @@
         android:name=".MyApp"
         android:allowBackup="true"
         android:label="@string/app_name"
-        android:icon="@mipmap/ic_echoshot3"
+        android:icon="@mipmap/ic_echoshot4"
         android:exported="false"
+        android:usesCleartextTraffic="true"
         tools:ignore="AllowBackup,GoogleAppIndexingWarning,HardcodedDebugMode">
 
         <activity
@@ -32,6 +34,25 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+        </activity>
+
+        <!-- AuthCallbackActivity for handling OAuth2 deep links -->
+        <activity
+            android:name=".auth.AuthCallbackActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/AppTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                
+                <!-- 딥링크 스킴 설정 (서버의 auth.deep-link-scheme 값과 일치해야 함) -->
+                <data
+                    android:scheme="echoshotx"
+                    android:host="auth"
+                    android:pathPrefix="/callback" />
+            </intent-filter>
         </activity>
 
         <!-- FileProvider used to share media with other apps -->

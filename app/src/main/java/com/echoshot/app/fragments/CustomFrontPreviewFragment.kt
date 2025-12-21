@@ -300,6 +300,11 @@ class CustomFrontPreviewFragment : Fragment() {
                     }
                 findNavController().navigate(action)
             },
+            onProfileClick = {
+                // 전면 카메라에서 프로필로 이동
+                val action = CustomFrontPreviewFragmentDirections.actionCustomFrontPreviewFragmentToProfileFragment()
+                findNavController().navigate(action)
+            },
             isRecording = { isCurrentlyRecording() }
         )
 

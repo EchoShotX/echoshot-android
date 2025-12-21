@@ -157,6 +157,11 @@ class GalleryFragment : Fragment() {
                 val action = GalleryFragmentDirections.actionGalleryFragmentToHomeFragment()
                 findNavController().navigate(action)
             },
+            onProfileClick = {
+                // 갤러리에서 프로필로 이동
+                val action = GalleryFragmentDirections.actionGalleryFragmentToProfileFragment()
+                findNavController().navigate(action)
+            },
             onCameraClick = {
                 // 갤러리에서 카메라로 이동 (CustomPreviewFragment)
                 val action = GalleryFragmentDirections.actionGalleryFragmentToCustomPreviewFragment(

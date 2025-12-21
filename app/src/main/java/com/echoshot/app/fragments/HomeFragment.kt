@@ -55,6 +55,11 @@ class HomeFragment : Fragment() {
             onCameraClick = {
                 // 홈에서 카메라로 이동
                 navigateToCamera()
+            },
+            onProfileClick = {
+                // 홈에서 프로필로 이동
+                val action = HomeFragmentDirections.actionHomeFragmentToProfileFragment()
+                findNavController().navigate(action)
             }
         )
 

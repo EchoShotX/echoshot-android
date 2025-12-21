@@ -131,6 +131,11 @@ class PhotoFragment : Fragment() {
                 // 사진 모드에서 갤러리로 이동
                 openGallery()
             },
+            onProfileClick = {
+                // 사진 모드에서 프로필로 이동
+                val action = PhotoFragmentDirections.actionPhotoFragmentToProfileFragment()
+                findNavController().navigate(action)
+            },
             isRecording = { false } // 사진 모드는 녹화 기능 없음
         )
 
