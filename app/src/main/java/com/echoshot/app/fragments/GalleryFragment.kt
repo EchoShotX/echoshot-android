@@ -1,20 +1,20 @@
 package com.echoshot.app.fragments
 
 import android.app.AlertDialog
+import android.app.RecoverableSecurityException
 import android.content.ContentUris
-import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
+import android.content.IntentSender
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.MediaMetadataRetriever
-import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import android.view.Gravity
@@ -24,11 +24,10 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
-import android.widget.ProgressBar
-import android.widget.RadioGroup
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.widget.AppCompatImageView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.LifecycleOwner
@@ -37,39 +36,21 @@ import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.bumptech.glide.Glide
-import com.chaquo.python.Python
 import com.echoshot.app.R
-import com.echoshot.app.VideoPipeline
 import com.echoshot.app.databinding.FragmentGalleryBinding
 import com.echoshot.app.databinding.GalleryItemBinding
 import com.echoshot.app.databinding.ItemDateHeaderBinding
-import com.echoshot.app.fragments.GalleryFragment.SectionedAdapter.Companion.TYPE_HEADER
-import com.echoshot.app.fragments.GalleryFragment.SectionedAdapter.Companion.TYPE_VIDEO
-import com.google.android.material.button.MaterialButtonToggleGroup
+
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
-import kotlin.math.roundToInt
 import android.annotation.SuppressLint
-import androidx.documentfile.provider.DocumentFile
-import com.echoshot.app.LogFormat
-import com.echoshot.app.mp4detact.DetectLogManager
 import com.echoshot.app.mp4detact.GlCtx
-import com.echoshot.app.mp4detact.JsonLogger
-import com.echoshot.app.mp4detact.LogOrchestrator
-import com.echoshot.app.mp4detact.VideoDetectFacade
-import java.io.FileNotFoundException
-import kotlinx.coroutines.*
-import kotlinx.coroutines.asCoroutineDispatcher
-import java.util.concurrent.Executors
 import com.echoshot.app.utils.setupBottomNavigationBar
 
 
@@ -101,26 +82,15 @@ class GalleryFragment : Fragment() {
     private lateinit var glCtx: GlCtx
 
     private var mode: GalleryMode = GalleryMode.BASIC
+    
+    // 선택 모드 관련 변수
+    private var isSelectionMode = false
+    private val selectedItems = mutableSetOf<Uri>()
+    
+    // 삭제 권한 요청 관련
+    private var pendingDeleteUris: List<Uri> = emptyList()
+    private lateinit var deletePermissionLauncher: androidx.activity.result.ActivityResultLauncher<IntentSenderRequest>
 
-    private fun getVideoDurationMs(ctx: Context, uri: Uri): Long {
-        val r = MediaMetadataRetriever()
-        return try {
-            r.setDataSource(ctx, uri)
-            (r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0L)
-        } finally { r.release() }
-    }
-
-    private fun estimateSeconds(durationMs: Long): Int {
-        val sec = durationMs / 1000.0
-        return (2.0 + sec / 3.0).roundToInt()
-    }
-
-
-    private fun copyUriToFile(ctx: Context, src: Uri, dst: File) {
-        ctx.contentResolver.openInputStream(src)!!.use { inp ->
-            FileOutputStream(dst).use { out -> inp.copyTo(out) }
-        }
-    }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?,
                               savedInstanceState: Bundle?) : View {
@@ -133,10 +103,33 @@ class GalleryFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         glCtx = GlCtx()
+        
+        // 삭제 권한 요청 Launcher 초기화
+        deletePermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.StartIntentSenderForResult()
+        ) { result ->
+            if (result.resultCode == android.app.Activity.RESULT_OK) {
+                // 권한이 승인되었으면 삭제 재시도
+                deleteUrisWithPermission(pendingDeleteUris)
+            } else {
+                // 권한이 거부되었으면 메시지 표시
+                Toast.makeText(
+                    requireContext(),
+                    getString(R.string.delete_permission_denied),
+                    Toast.LENGTH_SHORT
+                ).show()
+                exitSelectionMode()
+            }
+        }
 
         binding.backIcon.setOnClickListener { 
             // ✅ 방법 1: 명시적으로 CustomPreviewFragment로 네비게이션하여 모든 파라미터 전달
             navigateBackToCustomPreview()
+        }
+        
+        // 내장 갤러리 버튼 클릭
+        binding.systemGalleryButton.setOnClickListener {
+            openSystemGallery()
         }
         
         // 시스템 백 버튼도 처리
@@ -144,7 +137,11 @@ class GalleryFragment : Fragment() {
             viewLifecycleOwner,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    navigateBackToCustomPreview()
+                    if (isSelectionMode) {
+                        exitSelectionMode()
+                    } else {
+                        navigateBackToCustomPreview()
+                    }
                 }
             }
         )
@@ -225,6 +222,7 @@ class GalleryFragment : Fragment() {
         // 3) 탭 전환
         binding.btnGallery.setOnClickListener {
             if (mode != GalleryMode.BASIC) {
+                exitSelectionMode()
                 mode = GalleryMode.BASIC
                 setActiveTab(isBasic = true)
                 reloadForMode(true)
@@ -232,12 +230,264 @@ class GalleryFragment : Fragment() {
         }
         binding.btnExtendedGallery.setOnClickListener {
             if (mode != GalleryMode.EXTENDED) {
+                exitSelectionMode()
                 mode = GalleryMode.EXTENDED
                 setActiveTab(isBasic = false)
                 reloadForMode(false)
             }
         }
+        
+        // 4) 삭제 버튼 클릭
+        binding.btnDelete.setOnClickListener {
+            deleteSelectedItems()
+        }
     }
+    
+    /**
+     * 선택 모드 진입
+     */
+    private fun enterSelectionMode() {
+        isSelectionMode = true
+        binding.deleteButtonContainer.visibility = View.VISIBLE
+        binding.bottomTabs.visibility = View.GONE
+        // backBar UI 업데이트
+        binding.systemGalleryButton.visibility = View.GONE
+        binding.selectedCountText.visibility = View.VISIBLE
+        updateDeleteButton()
+        updateSelectedCount()
+        // 어댑터의 선택 모드 상태를 즉시 업데이트하여 동그라미와 체크 표시
+        (binding.galleryRecyclerView.adapter as? SectionedAdapter)?.updateSelectionMode(
+            isSelectionMode, 
+            selectedItems
+        )
+    }
+    
+    /**
+     * 선택 모드 종료
+     */
+    private fun exitSelectionMode() {
+        isSelectionMode = false
+        selectedItems.clear()
+        binding.deleteButtonContainer.visibility = View.GONE
+        binding.bottomTabs.visibility = View.VISIBLE
+        // backBar UI 업데이트
+        binding.systemGalleryButton.visibility = View.VISIBLE
+        binding.selectedCountText.visibility = View.GONE
+        reloadForMode(null) // 어댑터 갱신
+    }
+    
+    /**
+     * 항목 선택/해제 토글
+     */
+    private fun toggleSelection(uri: Uri) {
+        if (selectedItems.contains(uri)) {
+            selectedItems.remove(uri)
+        } else {
+            selectedItems.add(uri)
+        }
+        updateDeleteButton() // updateDeleteButton 내부에서 updateSelectedCount 호출
+        // 어댑터에 선택 상태 변경 알림 (헤더의 선택 개수도 업데이트되도록)
+        (binding.galleryRecyclerView.adapter as? SectionedAdapter)?.updateSelectedItems(selectedItems)
+    }
+    
+    /**
+     * 삭제 버튼 상태 업데이트
+     */
+    private fun updateDeleteButton() {
+        binding.btnDelete.isClickable = selectedItems.isNotEmpty()
+        binding.btnDelete.isEnabled = selectedItems.isNotEmpty()
+        binding.btnDelete.alpha = if (selectedItems.isNotEmpty()) 1.0f else 0.5f
+        updateSelectedCount()
+    }
+    
+    /**
+     * 선택 개수 표시 업데이트
+     */
+    private fun updateSelectedCount() {
+        if (isSelectionMode) {
+            val count = selectedItems.size
+            binding.selectedCountText.text = if (count > 0) {
+                getString(R.string.selected_count, count)
+            } else {
+                ""
+            }
+        }
+    }
+    
+    /**
+     * 내장 갤러리 앱 열기
+     */
+    private fun openSystemGallery() {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                type = "image/*"
+                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(
+                requireContext(),
+                getString(R.string.cannot_open_gallery),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+    
+    /**
+     * 선택된 항목 삭제
+     */
+    private fun deleteSelectedItems() {
+        if (selectedItems.isEmpty()) return
+        
+        val count = selectedItems.size
+        AlertDialog.Builder(requireContext())
+            .setTitle(getString(R.string.delete))
+            .setMessage(
+                if (count == 1) {
+                    getString(R.string.delete_single_item)
+                } else {
+                    getString(R.string.delete_multiple_items, count)
+                }
+            )
+            .setPositiveButton(getString(R.string.delete)) { _, _ ->
+                performDelete()
+            }
+            .setNegativeButton(getString(android.R.string.cancel), null)
+            .show()
+    }
+    
+    /**
+     * 실제 삭제 수행
+     */
+    private fun performDelete() {
+        pendingDeleteUris = selectedItems.toList()
+        deleteUrisWithPermission(pendingDeleteUris)
+    }
+    
+    /**
+     * 권한 요청을 포함한 삭제 수행
+     */
+    private fun deleteUrisWithPermission(uris: List<Uri>) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val needPermissionUris = mutableListOf<Uri>()
+            val deletedCount = uris.count { uri ->
+                try {
+                    val deleted = requireContext().contentResolver.delete(uri, null, null)
+                    if (deleted > 0) {
+                        // 파일도 삭제 시도
+                        deleteFileIfExists(uri)
+                        true
+                    } else {
+                        false
+                    }
+                } catch (e: RecoverableSecurityException) {
+                    // 권한이 필요한 경우
+                    needPermissionUris.add(uri)
+                    false
+                } catch (e: Exception) {
+                    Log.e(TAG, "삭제 실패: $uri", e)
+                    false
+                }
+            }
+            
+            withContext(Dispatchers.Main) {
+                // 권한이 필요한 항목이 있으면 권한 요청
+                if (needPermissionUris.isNotEmpty()) {
+                    requestDeletePermission(needPermissionUris)
+                } else {
+                    // 모든 삭제 완료
+                    if (deletedCount > 0) {
+                        Toast.makeText(
+                            requireContext(),
+                            if (deletedCount == 1) {
+                                getString(R.string.item_deleted)
+                            } else {
+                                getString(R.string.items_deleted, deletedCount)
+                            },
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    exitSelectionMode()
+                    reloadForMode(null) // 갤러리 새로고침
+                }
+            }
+        }
+    }
+    
+    /**
+     * 삭제 권한 요청
+     */
+    private fun requestDeletePermission(uris: List<Uri>) {
+        try {
+            val firstUri = uris.first()
+            val exception = try {
+                requireContext().contentResolver.delete(firstUri, null, null)
+                null
+            } catch (e: RecoverableSecurityException) {
+                e
+            } catch (e: Exception) {
+                null
+            }
+            
+            if (exception != null) {
+                pendingDeleteUris = uris
+                val intentSender = exception.userAction.actionIntent?.intentSender
+                if (intentSender != null) {
+                    val request = IntentSenderRequest.Builder(intentSender).build()
+                    deletePermissionLauncher.launch(request)
+                } else {
+                    Log.e(TAG, "IntentSender를 가져올 수 없습니다.")
+                    Toast.makeText(
+                        requireContext(),
+                        getString(R.string.delete_permission_denied),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    exitSelectionMode()
+                }
+            } else {
+                // 권한 요청이 필요 없으면 다시 시도
+                deleteUrisWithPermission(uris)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "권한 요청 실패", e)
+            Toast.makeText(
+                requireContext(),
+                getString(R.string.delete_permission_required),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+    
+    /**
+     * 파일 삭제 (파일 경로가 있는 경우)
+     */
+    private fun deleteFileIfExists(uri: Uri) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10 이상에서는 MediaStore를 통해서만 삭제 가능
+                return
+            }
+            
+            // Android 9 이하에서는 파일 경로로 직접 삭제 시도
+            val projection = arrayOf(MediaStore.MediaColumns.DATA)
+            requireContext().contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val columnIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
+                    val filePath = cursor.getString(columnIndex)
+                    if (!filePath.isNullOrEmpty()) {
+                        val file = File(filePath)
+                        if (file.exists()) {
+                            file.delete()
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "파일 삭제 실패: $uri", e)
+        }
+    }
+    
 
 
     private fun reloadForMode(isBasic: Boolean? = null) {
@@ -256,18 +506,33 @@ class GalleryFragment : Fragment() {
                 binding.galleryRecyclerView.adapter = SectionedAdapter(
                     items,
                     viewLifecycleOwner,  // ✅ LifecycleOwner 전달
+                    isSelectionMode = isSelectionMode,
+                    selectedItems = selectedItems.toMutableSet(),
                     onItemClick = { v ->
-                        // BASIC: 바로 플레이어 / EXTENDED: 기존 동작 유지
-                        if (mode == GalleryMode.EXTENDED && v.type == "cropped") {
-                            CroppedPagerDialogFragment
-                                .newInstance(v.uuid)
-                                .show(childFragmentManager, "croppedPager")
+                        if (isSelectionMode) {
+                            // 선택 모드: 선택/해제
+                            toggleSelection(v.uri)
                         } else {
-                            findNavController().navigate(
-                                GalleryFragmentDirections
-                                    .actionGalleryFragmentToPreviewPlayerFragment(v.uri.toString())
-                            )
+                            // 일반 모드: BASIC: 바로 플레이어 / EXTENDED: 기존 동작 유지
+                            if (mode == GalleryMode.EXTENDED && v.type == "cropped") {
+                                CroppedPagerDialogFragment
+                                    .newInstance(v.uuid)
+                                    .show(childFragmentManager, "croppedPager")
+                            } else {
+                                findNavController().navigate(
+                                    GalleryFragmentDirections
+                                        .actionGalleryFragmentToPreviewPlayerFragment(v.uri.toString())
+                                )
+                            }
                         }
+                    },
+                    onItemLongClick = { v ->
+                        // 꾹 누르면 선택 모드 진입 (BASIC 모드에서만)
+                        if (!isSelectionMode && mode == GalleryMode.BASIC) {
+                            enterSelectionMode()
+                            toggleSelection(v.uri)
+                        }
+                        true
                     },
                     onLockedClick = { v ->
                         if (mode == GalleryMode.EXTENDED) showLockedOverlay(v.uri)
@@ -603,9 +868,31 @@ class GalleryFragment : Fragment() {
     private class SectionedAdapter(
         private val items: List<ListItem>,
         private val lifecycleOwner: LifecycleOwner,
+        private var isSelectionMode: Boolean = false,
+        private var selectedItems: MutableSet<Uri> = mutableSetOf(),
         private val onItemClick: (ListItem.Video) -> Unit,
+        private val onItemLongClick: ((ListItem.Video) -> Boolean)? = null,
         private val onLockedClick: (ListItem.Video) -> Unit
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+        
+        /**
+         * 선택 모드 상태 업데이트
+         */
+        fun updateSelectionMode(isSelectionMode: Boolean, selectedItems: Set<Uri>) {
+            this.isSelectionMode = isSelectionMode
+            this.selectedItems.clear()
+            this.selectedItems.addAll(selectedItems)
+            notifyDataSetChanged()
+        }
+        
+        /**
+         * 선택된 항목 업데이트
+         */
+        fun updateSelectedItems(selectedItems: Set<Uri>) {
+            this.selectedItems.clear()
+            this.selectedItems.addAll(selectedItems)
+            notifyDataSetChanged()
+        }
 
         companion object {
             const val TYPE_HEADER      = 0
@@ -672,14 +959,32 @@ class GalleryFragment : Fragment() {
                 binding.badgeMulti.visibility =
                     if (v.type == "cropped" && v.croppedCount > 1) View.VISIBLE else View.GONE
 
-                if (v.locked) {
+                // 선택 모드 표시
+                val isSelected = selectedItems.contains(v.uri)
+                if (isSelectionMode) {
+                    // 선택 모드일 때 모든 항목에 동그라미 표시
+                    binding.selectionCheckCircle.visibility = View.VISIBLE
+                    // 선택된 항목은 체크 채워진 아이콘 표시
+                    binding.selectionCheckFilled.visibility = if (isSelected) View.VISIBLE else View.GONE
+                } else {
+                    binding.selectionCheckCircle.visibility = View.GONE
+                    binding.selectionCheckFilled.visibility = View.GONE
+                }
+
+                // 클릭 리스너 설정
+                if (v.locked && !isSelectionMode) {
                     binding.dimOverlay.visibility = View.VISIBLE
                     binding.lockOverlayImageView.visibility = View.VISIBLE
                     binding.root.setOnClickListener { onLockedClick(v) }
+                    binding.root.setOnLongClickListener(null)
                 } else {
+                    // 선택 모드가 아닐 때는 dimOverlay 숨김 (잠금이 아닌 경우)
                     binding.dimOverlay.visibility = View.GONE
                     binding.lockOverlayImageView.visibility = View.GONE
                     binding.root.setOnClickListener { onItemClick(v) }
+                    binding.root.setOnLongClickListener {
+                        onItemLongClick?.invoke(v) ?: false
+                    }
                 }
             }
         }
@@ -734,7 +1039,41 @@ class GalleryFragment : Fragment() {
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             when (val it = items[position]) {
-                is ListItem.Header -> (holder as HeaderVH).binding.headerText.text = it.label
+                is ListItem.Header -> {
+                    val headerBinding = (holder as HeaderVH).binding
+                    headerBinding.headerText.text = it.label
+                    
+                    // 선택 모드일 때 전체 선택된 개수 표시 (첫 번째 헤더에만)
+                    if (isSelectionMode && selectedItems.isNotEmpty() && position == 0) {
+                        // 첫 번째 헤더에만 전체 선택 개수 표시
+                        val count = selectedItems.size
+                        headerBinding.selectedCountText.text = 
+                            headerBinding.root.context.getString(R.string.selected_count, count)
+                        headerBinding.selectedCountText.visibility = View.VISIBLE
+                    } else if (isSelectionMode && selectedItems.isNotEmpty()) {
+                        // 다른 헤더에는 현재 섹션의 선택 개수 표시
+                        var count = 0
+                        for (i in (position + 1) until items.size) {
+                            val item = items.getOrNull(i)
+                            if (item is ListItem.Video && selectedItems.contains(item.uri)) {
+                                count++
+                            } else if (item is ListItem.Header) {
+                                // 다음 헤더를 만나면 중단
+                                break
+                            }
+                        }
+                        
+                        if (count > 0) {
+                            headerBinding.selectedCountText.text = 
+                                headerBinding.root.context.getString(R.string.selected_count, count)
+                            headerBinding.selectedCountText.visibility = View.VISIBLE
+                        } else {
+                            headerBinding.selectedCountText.visibility = View.GONE
+                        }
+                    } else {
+                        headerBinding.selectedCountText.visibility = View.GONE
+                    }
+                }
                 is ListItem.Video  -> (holder as VideoVH).bind(it)   // ← uri, locked, durationMs 따로 안 넘김
                 is ListItem.Placeholder -> { /* no-op */ }
             }
@@ -754,18 +1093,32 @@ class GalleryFragment : Fragment() {
                     binding.galleryRecyclerView.adapter = SectionedAdapter(
                         items,
                         viewLifecycleOwner,  // ✅ LifecycleOwner 전달
+                        isSelectionMode = isSelectionMode,
+                        selectedItems = selectedItems.toMutableSet(),
                         onItemClick = { v ->
-                            when (v.type) {
-                                "cropped" -> {
-                                    CroppedPagerDialogFragment
-                                        .newInstance(v.uuid)
-                                        .show(childFragmentManager, "croppedPager")
+                            if (isSelectionMode) {
+                                toggleSelection(v.uri)
+                            } else {
+                                when (v.type) {
+                                    "cropped" -> {
+                                        CroppedPagerDialogFragment
+                                            .newInstance(v.uuid)
+                                            .show(childFragmentManager, "croppedPager")
+                                    }
+                                    else -> findNavController().navigate(
+                                        GalleryFragmentDirections
+                                            .actionGalleryFragmentToPreviewPlayerFragment(v.uri.toString())
+                                    )
                                 }
-                                else -> findNavController().navigate(
-                                    GalleryFragmentDirections
-                                        .actionGalleryFragmentToPreviewPlayerFragment(v.uri.toString())
-                                )
                             }
+                        },
+                        onItemLongClick = { v ->
+                            // 꾹 누르면 선택 모드 진입 (BASIC 모드에서만)
+                            if (!isSelectionMode && mode == GalleryMode.BASIC) {
+                                enterSelectionMode()
+                                toggleSelection(v.uri)
+                            }
+                            true
                         },
                         onLockedClick = { v -> showLockedOverlay(v.uri) }
                     )

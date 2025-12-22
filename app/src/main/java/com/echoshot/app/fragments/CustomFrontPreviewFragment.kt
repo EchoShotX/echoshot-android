@@ -42,6 +42,7 @@ import android.widget.Toast
 import android.widget.SeekBar
 import android.widget.LinearLayout
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.view.Gravity
 import android.graphics.Color
 import android.graphics.Paint
@@ -1113,9 +1114,17 @@ class CustomFrontPreviewFragment : Fragment() {
         )
         val videoFiles = dir.listFiles { f -> f.extension.equals("mp4", true) }
             ?.sortedByDescending { it.lastModified() }
-            ?: return
+            ?: run {
+                fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
+                return
+            }
 
-        val latest = videoFiles.firstOrNull() ?: return
+        val latest = videoFiles.firstOrNull() ?: run {
+            fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
+            fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
+            return
+        }
 
         val targetPx = 300
         val thumb = try {
@@ -1136,9 +1145,15 @@ class CustomFrontPreviewFragment : Fragment() {
         } catch (e: IOException) {
             e.printStackTrace()
             null
-        } ?: return
+        }
 
-        fragmentBinding.galleryButton.setImageBitmap(thumb)
+        if (thumb == null) {
+            fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
+            fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
+        } else {
+            fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_CROP
+            fragmentBinding.galleryButton.setImageBitmap(thumb)
+        }
     }
     
     // 📸 녹화 중 사진 촬영 함수 (미리보기와 동일한 프레임을 저장: PixelCopy)

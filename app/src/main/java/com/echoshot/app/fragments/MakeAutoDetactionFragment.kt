@@ -151,8 +151,8 @@ class MakeAutoDetactionFragment : DialogFragment() {
         // 시작 버튼
         btnStart.setOnClickListener {
             val paddingFactor = when (toggleCrop.checkedButtonId) {
-                R.id.btnCenterMode -> 3f   // 인물 중심 (상체 기준)
-                R.id.btnWideMode   -> 4f   // 와이드 (상체 기준)
+                R.id.btnCenterMode -> 3.5f   // 인물 중심 (상체 기준)
+                R.id.btnWideMode   -> 5f   // 와이드 (상체 기준)
                 else               -> 3f
             }
             val trackMode = getTrackMode()

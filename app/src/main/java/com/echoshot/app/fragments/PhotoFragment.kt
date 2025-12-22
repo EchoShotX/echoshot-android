@@ -28,6 +28,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
+import android.widget.ImageView
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -43,10 +44,8 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.echoshot.app.ui.CenterSnapHelper
 import com.echoshot.app.ui.ZoomRulerAdapter
 import androidx.navigation.fragment.navArgs
-import com.echoshot.app.ui.EdgeCenterSpacingDecoration
 import java.io.File
 import java.io.IOException
 
@@ -78,6 +77,8 @@ class PhotoFragment : Fragment() {
     private var cameraProvider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+    private var cameraMinZoom = 1.0f
+    private var cameraMaxZoom = 10.0f
 
     private var zoomAdapter: ZoomRulerAdapter? = null
     private var zoomRuler: RecyclerView? = null
@@ -250,7 +251,13 @@ class PhotoFragment : Fragment() {
                     val rv = zoomRuler
                     if (adapter != null && rv != null) {
                         val pos = adapter.zoomToPosition(newZoom)
-                        rv.scrollToPosition(pos)
+                        val lm = rv.layoutManager as? LinearLayoutManager
+                        if (lm != null) {
+                            val rvWidth = rv.width
+                            val itemWidth = (resources.displayMetrics.density * 15).toInt()  // 15dp
+                            val offset = (rvWidth / 2) - (itemWidth / 2)
+                            lm.scrollToPositionWithOffset(pos, offset)
+                        }
                     }
                 }
                 return true
@@ -388,20 +395,24 @@ class PhotoFragment : Fragment() {
         val lm = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         zoomRuler!!.layoutManager = lm
 
-        val snapHelper = CenterSnapHelper()
-        snapHelper.attachToRecyclerView(zoomRuler)
+        // CenterSnapHelper 제거 - 연속적인 줌 업데이트를 위해 자유로운 스크롤 허용
+        // EdgeCenterSpacingDecoration 제거 - 패딩으로 통일하여 중복 계산 방지
 
-        val itemWidthDp = 12
-        zoomRuler!!.addItemDecoration(EdgeCenterSpacingDecoration(itemWidthDp))
+        val itemWidthDp = 15  // 눈금 간격 줄임 (20 -> 15)
 
-        // 실시간 업데이트용 간단 throttle
-        var lastUpdateMs = 0L
+        // 실시간 업데이트 - throttle 제거하여 최대한 부드럽게
+        var lastZoomText = ""
         fun maybeUpdateZoom(z: Float) {
-            val now = System.currentTimeMillis()
-            if (now - lastUpdateMs >= 16) {
-                camera?.cameraControl?.setZoomRatio(z)
-                zoomHud?.text = String.format(Locale.KOREA, "%.1fx", z)
-                lastUpdateMs = now
+            // 카메라 범위로 클램프 (minZ >= 1.0인 경우 보호)
+            val clampedZ = z.coerceIn(cameraMinZoom, cameraMaxZoom)
+            // 줌 값은 항상 즉시 업데이트
+            camera?.cameraControl?.setZoomRatio(clampedZ)
+            
+            // 텍스트는 소수점 첫째자리만 표시하되, 변경될 때만 업데이트하여 부드럽게
+            val newText = String.format(Locale.KOREA, "%.1fx", clampedZ)
+            if (newText != lastZoomText) {
+                zoomHud?.text = newText
+                lastZoomText = newText
             }
         }
 
@@ -409,6 +420,9 @@ class PhotoFragment : Fragment() {
             openGallery()
         }
 
+        // 마지막으로 계산된 줌 값을 저장 (연속적인 줌 업데이트용)
+        var lastCalculatedZoom = 1.0f
+        
         zoomRuler!!.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 super.onScrolled(rv, dx, dy)
@@ -416,39 +430,27 @@ class PhotoFragment : Fragment() {
                 val adapter = zoomAdapter ?: return
                 val layout = rv.layoutManager as? LinearLayoutManager ?: return
 
-                val centerX = rv.width / 2
-                var closestChild: View? = null
-                var minDist = Int.MAX_VALUE
-                for (i in 0 until layout.childCount) {
-                    val child = layout.getChildAt(i) ?: continue
-                    val childCenter = (child.left + child.right) / 2
-                    val dist = kotlin.math.abs(childCenter - centerX)
-                    if (dist < minDist) { minDist = dist; closestChild = child }
-                }
-                val child = closestChild ?: return
-                val pos = rv.getChildAdapterPosition(child)
-                if (pos == RecyclerView.NO_POSITION) return
+                val itemWidth = (resources.displayMetrics.density * 15).toFloat() // 15dp
+                
+                // 패딩이 적용된 상태에서 스크롤 0은 중앙 아이템 인덱스 0을 의미합니다.
+                val scrollOffset = rv.computeHorizontalScrollOffset().toFloat()
+                val posF = scrollOffset / itemWidth
 
-                val childCenter = (child.left + child.right) / 2f
-                val itemWidth = child.width.toFloat().coerceAtLeast(1f)
-                val offsetInItem = (centerX - childCenter) / itemWidth
-                val posF = pos - offsetInItem
+                // positionToZoom 내부에서 minZoom에 따라 0.6x인지 1.0x인지 알아서 계산함
 
-                val z = adapter.positionToZoom(posF)
+                val z = adapter.positionToZoom(posF).coerceIn(cameraMinZoom, cameraMaxZoom)
+                lastCalculatedZoom = z
                 maybeUpdateZoom(z)
             }
 
             override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
                 super.onScrollStateChanged(rv, newState)
                 if (!initDone) return
-                val adapter = zoomAdapter ?: return
-                val layout = rv.layoutManager as? LinearLayoutManager ?: return
-                val snapView = snapHelper.findSnapView(layout) ?: return
-                val pos = rv.getChildAdapterPosition(snapView)
-                if (pos != RecyclerView.NO_POSITION) {
-                    val z = adapter.positionToZoom(pos)
-                    camera?.cameraControl?.setZoomRatio(z)
-                    zoomHud?.text = String.format(Locale.KOREA, "%.1fx", z)
+                
+                // 스크롤이 멈췄을 때 마지막으로 계산된 연속적인 줌 값 사용
+                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    camera?.cameraControl?.setZoomRatio(lastCalculatedZoom)
+                    zoomHud?.text = String.format(Locale.KOREA, "%.1fx", lastCalculatedZoom)
                 }
             }
         })
@@ -492,6 +494,35 @@ class PhotoFragment : Fragment() {
         cameraExecutor = Executors.newSingleThreadExecutor()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 앱을 나갔다가 돌아올 때 줌을 1.0으로 리셋하고 슬라이더도 1.0 위치로 이동
+        resetZoomToDefault()
+    }
+
+    /**
+     * 줌을 1.0으로 리셋하고 슬라이더도 1.0 위치(centerIndex)로 이동
+     * 정밀한 중앙 정렬을 위해 2단계 미세 조정 로직 포함
+     */
+    private fun resetZoomToDefault() {
+        val rv = zoomRuler ?: return
+        val adapter = zoomAdapter ?: return
+        val lm = rv.layoutManager as? LinearLayoutManager ?: return
+        val isMinZoomOne = cameraMinZoom >= 1.0f
+
+        if (isMinZoomOne) {
+            // 패딩 덕분에 0번이 정중앙
+            lm.scrollToPositionWithOffset(0, 0)
+        } else {
+            // 0.6x 환경에서 1.0x(centerIndex)를 중앙으로
+            lm.scrollToPositionWithOffset(adapter.centerIndex, 0)
+        }
+
+        val targetZoom = if (isMinZoomOne) cameraMinZoom else 1.0f
+        camera?.cameraControl?.setZoomRatio(targetZoom)
+        view?.findViewById<android.widget.TextView>(R.id.zoom_level_text)?.text = 
+            String.format(Locale.KOREA, "%.1fx", targetZoom)
+    }
 
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(requireContext())
@@ -527,46 +558,85 @@ class PhotoFragment : Fragment() {
 
                 val zoomHud = view?.findViewById<TextView>(R.id.zoom_level_text)
 
-                // 바인딩 직후 즉시 1.0 강제 (기기 min이 0.6이어도 바로 덮어씀)
-                camera!!.cameraControl.setZoomRatio(1.0f)
-                zoomHud?.text = "1.0x"
-
-                // zoomState 첫 emit에서 실제 min/max 확인 후 어댑터 부착 및 최종 보정
+                // zoomState observe로 줌 범위 및 상태 관리
                 appliedInitialZoom = false
                 initDone = false
+                
+                // 카메라 바인딩 직후 즉시 초기 줌 설정 시도 (zoomState가 아직 없으므로 일단 1.0으로 시도)
+                // 실제 값은 zoomState observe에서 설정됨
+                camera!!.cameraControl.setZoomRatio(1.0f)
+                zoomHud?.text = "1.0x"
+                
                 camera!!.cameraInfo.zoomState.observe(viewLifecycleOwner) { state ->
-                    if (!appliedInitialZoom && state != null) {
+                    if (state != null && !appliedInitialZoom) {
                         val minZ = state.minZoomRatio
                         val maxZ = state.maxZoomRatio
-
-                        // 1.0을 기기 범위에 맞게 한 번 더 보정
-                        val target = 1.0f.coerceIn(minZ, maxZ)
-                        if (target != 1.0f) {
-                            camera!!.cameraControl.setZoomRatio(target)
-                        }
-                        zoomHud?.text = String.format(Locale.KOREA, "%.1fx", target)
-
-                        // 실제 범위로 어댑터 생성/부착 (초기엔 어댑터 없었음)
+                        
+                        // 카메라 줌 범위 저장 (스크롤 리스너에서 사용)
+                        cameraMinZoom = minZ
+                        cameraMaxZoom = maxZ
+                        
+                        // 어댑터 생성 및 설정
+                        val itemWidthDp = 15  // 눈금 간격 줄임
+                        // minZ가 1.0 이상이면 왼쪽 눈금을 생성하지 않음 (스크롤 불가능하게)
+                        val minLeftTicks = if (minZ >= 1.0f) 0 else 5
+                        // minZ >= 1.0인 경우 midZoom을 minZ로 설정하여 정확한 중앙 정렬 보장
+                        val midZoom = if (minZ >= 1.0f) minZ else 1.0f
+                        // targetZoom도 midZoom에 맞춤 (minZ >= 1.0인 경우 minZ로 설정)
+                        val targetZoom = midZoom.coerceIn(minZ, maxZ)
                         val newAdapter = ZoomRulerAdapter(
-                            minZoom = minZ,   // 0.6 고정 하한 없음
-                            midZoom = 1.0f,
+                            minZoom = minZ,
+                            midZoom = midZoom,
                             maxZoom = maxZ,
-                            ticksPerLogUnit = 20,
-                            itemWidthDp = 12,
-                            minLeftTicks = 0,
-                            minRightTicks = 0
+                            ticksPerLogUnit = 25,  // 눈금 수 줄여서 드래그 민감도 높임
+                            itemWidthDp = itemWidthDp,
+                            minLeftTicks = minLeftTicks,      // 최소 왼쪽 눈금 수 (minZ >= 1.0이면 0)
+                            minRightTicks = 5      // 최소 오른쪽 눈금 수
                         )
                         zoomAdapter = newAdapter
                         zoomRuler?.adapter = newAdapter
 
-                        // 1.0 위치로 이동
-                        val pos = newAdapter.zoomToPosition(1.0f)
-                        zoomRuler?.post { zoomRuler?.scrollToPosition(pos) }
+                        val isMinZoomOne = minZ >= 1.0f // 1.0x부터 시작하는 렌즈 여부
+                        
+                        zoomRuler?.post {
+                            val rv = zoomRuler ?: return@post
+                            val lm = rv.layoutManager as? LinearLayoutManager ?: return@post
+                            
+                            // 중요: ruler.width가 0보다 큰지 확인 (측정 완료 확인)
+                            if (rv.width <= 0) {
+                                // 줌은 먼저 설정
+                                camera!!.cameraControl.setZoomRatio(targetZoom)
+                                zoomHud?.text = String.format(Locale.KOREA, "%.1fx", targetZoom)
+                                return@post
+                            }
+                            
+                            val itemWidth = (resources.displayMetrics.density * itemWidthDp).toInt()
+
+                            // [핵심] 0.6x든 1.0x든 상관없이 중앙 패딩 설정
+                            val halfPadding = (rv.width / 2) - (itemWidth / 2)
+                            rv.setPadding(halfPadding, 0, halfPadding, 0)
+                            rv.clipToPadding = false
+
+                            if (isMinZoomOne) {
+                                // 1.0x가 최소면 0번(1.0x)으로 이동
+                                lm.scrollToPositionWithOffset(0, 0)
+                            } else {
+                                // 0.6x가 최소면 centerIndex(1.0x)로 이동
+                                lm.scrollToPositionWithOffset(newAdapter.centerIndex, 0)
+                            }
+                            
+                            // 줌도 확실히 설정
+                            camera!!.cameraControl.setZoomRatio(targetZoom)
+                            zoomHud?.text = String.format(Locale.KOREA, "%.1fx", targetZoom)
+                        }
 
                         appliedInitialZoom = true
                         initDone = true
-                        // 동기화: EV 슬라이더 범위/현재 값
                         syncEvSliderFromCamera()
+                    } else if (state != null && appliedInitialZoom) {
+                        // 초기화 후에는 줌 값만 업데이트 (UI 동기화)
+                        val currentZoom = state.zoomRatio
+                        zoomHud?.text = String.format(Locale.KOREA, "%.1fx", currentZoom)
                     }
                 }
 
@@ -616,9 +686,17 @@ class PhotoFragment : Fragment() {
         )
         val videoFiles = dir.listFiles { f -> f.extension.equals("mp4", true) }
             ?.sortedByDescending { it.lastModified() }
-            ?: return
+            ?: run {
+                btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                btn.setImageResource(R.drawable.ic_photo_gallery)
+                return
+            }
 
-        val latest = videoFiles.firstOrNull() ?: return
+        val latest = videoFiles.firstOrNull() ?: run {
+            btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+            btn.setImageResource(R.drawable.ic_photo_gallery)
+            return
+        }
 
         val targetPx = 300
         val thumb = try {
@@ -639,9 +717,15 @@ class PhotoFragment : Fragment() {
         } catch (e: IOException) {
             e.printStackTrace()
             null
-        } ?: return
+        }
 
-        btn.setImageBitmap(thumb)
+        if (thumb == null) {
+            btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+            btn.setImageResource(R.drawable.ic_photo_gallery)
+        } else {
+            btn.scaleType = ImageView.ScaleType.CENTER_CROP
+            btn.setImageBitmap(thumb)
+        }
     }
 
     private fun openGallery() {

@@ -202,8 +202,8 @@ class HybridPickerDialogFragment : DialogFragment() {
 
                             // 선택된 모드에 따른 paddingFactor 결정
                             val paddingFactor = when (toggleCropMode.checkedButtonId) {
-                                R.id.btnCenterMode -> 1.5f  // 인물중심 모드
-                                R.id.btnWideMode -> 2.5f    // 와이드 모드
+                                R.id.btnCenterMode -> 2f  // 인물중심 모드
+                                R.id.btnWideMode -> 3f    // 와이드 모드
                                 else -> 2.0f                // 기본값 (노설정)
                             }
                             

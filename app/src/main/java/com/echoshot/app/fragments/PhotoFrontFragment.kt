@@ -26,6 +26,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
+import android.widget.ImageView
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -450,9 +451,17 @@ class PhotoFrontFragment : Fragment() {
         )
         val videoFiles = dir.listFiles { f -> f.extension.equals("mp4", true) }
             ?.sortedByDescending { it.lastModified() }
-            ?: return
+            ?: run {
+                btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                btn.setImageResource(R.drawable.ic_photo_gallery)
+                return
+            }
 
-        val latest = videoFiles.firstOrNull() ?: return
+        val latest = videoFiles.firstOrNull() ?: run {
+            btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+            btn.setImageResource(R.drawable.ic_photo_gallery)
+            return
+        }
 
         val targetPx = 300
         val thumb = try {
@@ -473,9 +482,15 @@ class PhotoFrontFragment : Fragment() {
         } catch (e: IOException) {
             e.printStackTrace()
             null
-        } ?: return
+        }
 
-        btn.setImageBitmap(thumb)
+        if (thumb == null) {
+            btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+            btn.setImageResource(R.drawable.ic_photo_gallery)
+        } else {
+            btn.scaleType = ImageView.ScaleType.CENTER_CROP
+            btn.setImageBitmap(thumb)
+        }
     }
 
     private fun openGallery() {

@@ -1,7 +1,9 @@
 package com.echoshot.app.fragments
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.ImageFormat
 import android.hardware.camera2.*
 import android.hardware.camera2.params.ColorSpaceProfiles
@@ -17,12 +19,16 @@ import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.content.ContextCompat
 import androidx.core.os.LocaleListCompat
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.echoshot.app.R
 import com.echoshot.app.databinding.FragmentHomeBinding
+import com.echoshot.app.utils.MediaScanUtils
 import com.echoshot.app.utils.setupBottomNavigationBar
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 class HomeFragment : Fragment() {
@@ -72,6 +78,18 @@ class HomeFragment : Fragment() {
         binding.guideBox.setOnClickListener {
             GuideDialogFragment.newInstance()
                 .show(parentFragmentManager, "guideDialog")
+        }
+        
+        // 앱 첫 실행 시 또는 저장된 미디어 파일 스캔 (백그라운드에서 비동기 처리)
+        // 저장공간 권한이 있는 경우에만 스캔 실행
+        if (MediaScanUtils.hasStoragePermission(requireContext())) {
+            lifecycleScope.launch {
+                MediaScanUtils.scanEchoShotMedia(requireContext())
+            }
+        } else {
+            // 권한이 없으면 로그만 남기고 스캔하지 않음
+            // 사용자가 나중에 권한을 허용하면 다음 실행 시 자동으로 스캔됨
+            android.util.Log.d("HomeFragment", "저장공간 권한이 없어 미디어 스캔을 건너뜁니다")
         }
     }
 

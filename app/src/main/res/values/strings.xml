@@ -58,6 +58,16 @@
     <string name="yesterday">Yesterday</string>
     <string name="cannot_get_filename">Cannot get filename.</string>
     <string name="invalid_filename">Invalid filename</string>
+    <string name="delete">Delete</string>
+    <string name="delete_single_item">Delete this item?</string>
+    <string name="delete_multiple_items">Delete %d items?</string>
+    <string name="item_deleted">Item deleted</string>
+    <string name="items_deleted">%d items deleted</string>
+    <string name="selected_count">%d selected</string>
+    <string name="open_system_gallery">Open system gallery</string>
+    <string name="cannot_open_gallery">Cannot open gallery</string>
+    <string name="delete_permission_required">Permission required to delete files</string>
+    <string name="delete_permission_denied">Permission denied. Cannot delete files.</string>
     
     <!-- Camera Mode -->
     <string name="photo">Photo</string>
