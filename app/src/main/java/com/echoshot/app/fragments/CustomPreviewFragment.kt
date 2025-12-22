@@ -2230,6 +2230,10 @@ class CustomPreviewFragment : Fragment() {
         val videoFiles = dir.listFiles { f -> f.extension.equals("mp4", true) }
             ?: run {
                 Log.d("ThumbDebug", "listFiles() == null")
+                fragmentBinding.galleryButton.post {
+                    fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                    fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
+                }
                 return
             }
 
@@ -2240,6 +2244,10 @@ class CustomPreviewFragment : Fragment() {
             .firstOrNull()
             ?: run {
                 Log.d("ThumbDebug", "no latest mp4 found (size=${videoFiles.size})")
+                fragmentBinding.galleryButton.post {
+                    fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                    fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
+                }
                 return
             }
 
@@ -2258,16 +2266,16 @@ class CustomPreviewFragment : Fragment() {
             null
         }
 
-        if (thumb == null) {
-            Log.d("ThumbDebug", "썸네일이 null이라 갤러리 버튼 업데이트 스킵")
-            return
-        }
-
-        Log.d("ThumbDebug", "썸네일 생성 성공 → 버튼에 적용")
-
         fragmentBinding.galleryButton.post {
-            fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_CROP
-            fragmentBinding.galleryButton.setImageBitmap(thumb)
+            if (thumb == null) {
+                Log.d("ThumbDebug", "썸네일이 null이라 기본 아이콘 표시")
+                fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
+            } else {
+                Log.d("ThumbDebug", "썸네일 생성 성공 → 버튼에 적용")
+                fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_CROP
+                fragmentBinding.galleryButton.setImageBitmap(thumb)
+            }
         }
     }
 

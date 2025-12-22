@@ -48,7 +48,8 @@ class ZoomRulerAdapter(
     }
 
     val total = leftTicks + 1 + rightTicks
-    val centerIndex = leftTicks
+    // minZoom >= 1.0f인 경우 0번 인덱스가 1.0x (minZoom)가 되도록 centerIndex를 0으로 설정
+    val centerIndex = if (safeMinZoom >= 1.0f) 0 else leftTicks
 
 
     // 라벨을 찍을 줌 스톱 (중복 방지: 정확히 해당 포지션에서만 라벨)
@@ -100,6 +101,18 @@ class ZoomRulerAdapter(
             return safeMidZoom
         }
         
+        // minZoom >= 1.0f인 경우: 0번 인덱스가 minZoom부터 시작
+        if (safeMinZoom >= 1.0f) {
+            if (rightTicks <= 0 || safeMaxZoom <= safeMinZoom || safeMinZoom <= 0f) {
+                return safeMinZoom
+            }
+            // posF가 0일 때 minZoom, posF가 rightTicks일 때 maxZoom
+            val t = (posF / rightTicks).coerceIn(0f, 1f) // [0..1] => min→max
+            val result = (safeMinZoom * ((safeMaxZoom / safeMinZoom).toDouble().pow(t.toDouble()))).toFloat()
+            return if (result.isNaN() || result.isInfinite()) safeMinZoom else result
+        }
+        
+        // 기존 로직: minZoom < 1.0f인 경우 (0.6부터 시작하는 광각 렌즈)
         return if (posF <= centerIndex) {
             if (centerIndex <= 0 || safeMidZoom <= safeMinZoom || safeMinZoom <= 0f) {
                 return safeMidZoom
@@ -134,6 +147,32 @@ class ZoomRulerAdapter(
             return centerIndex
         }
         
+        // minZoom >= 1.0f인 경우: 0번 인덱스가 minZoom부터 시작
+        if (safeMinZoom >= 1.0f) {
+            if (safeMaxZoom <= safeMinZoom || safeMinZoom <= 0f) {
+                return 0
+            }
+            val numerator = ln((z / safeMinZoom).toDouble())
+            val denominator = ln((safeMaxZoom / safeMinZoom).toDouble())
+            
+            if (denominator == 0.0 || denominator.isNaN() || denominator.isInfinite() ||
+                numerator.isNaN() || numerator.isInfinite()) {
+                Log.w("ZoomRulerAdapter", "Invalid log calculation (min>=1.0): num=$numerator, denom=$denominator")
+                return 0
+            }
+            
+            val t = (numerator / denominator).toFloat()
+            
+            if (t.isNaN() || t.isInfinite()) {
+                Log.w("ZoomRulerAdapter", "Invalid t value (min>=1.0): $t")
+                return 0
+            }
+            
+            val pos = (t * rightTicks).roundToInt()
+            return pos.coerceIn(0, total - 1)
+        }
+        
+        // 기존 로직: minZoom < 1.0f인 경우
         return if (z <= safeMidZoom) {
             // 왼쪽 구간: minZoom → midZoom
             if (safeMidZoom <= safeMinZoom || safeMinZoom <= 0f) {

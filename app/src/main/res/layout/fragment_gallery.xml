@@ -24,12 +24,34 @@
             app:tint="@android:color/white" />
 
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:text="@string/gallery"
             android:textColor="@android:color/white"
             android:textSize="18sp"
             android:layout_marginStart="12dp" />
+
+        <!-- 기본 모드: 내장 갤러리 버튼 -->
+        <ImageView
+            android:id="@+id/systemGalleryButton"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:src="@drawable/ic_photo_gallery"
+            app:tint="@android:color/white"
+            android:visibility="visible"
+            android:layout_marginTop="4dp"
+            android:contentDescription="@string/open_system_gallery" />
+
+        <!-- 선택 모드: 선택 개수 표시 -->
+        <TextView
+            android:id="@+id/selectedCountText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@android:color/white"
+            android:textSize="16sp"
+            android:visibility="gone"
+            android:layout_marginTop="4dp" />
     </LinearLayout>
 
     <!-- 📸 썸네일 목록 (SwipeRefreshLayout으로 감싸기) -->
@@ -80,6 +102,44 @@
             android:textColor="#888888"
             android:backgroundTint="@android:color/transparent"
             android:strokeColor="#888888" />
+    </LinearLayout>
+
+    <!-- 삭제 버튼 (선택 모드일 때만 표시) -->
+    <LinearLayout
+        android:id="@+id/deleteButtonContainer"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:background="#1a1a1a"
+        android:visibility="gone"
+        android:paddingHorizontal="16dp">
+
+        <LinearLayout
+            android:id="@+id/btnDelete"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:background="#FF5252"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingHorizontal="16dp">
+            
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_delete"
+                app:tint="@android:color/white"
+                android:layout_marginEnd="8dp" />
+            
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/delete"
+                android:textColor="@android:color/white"
+                android:textSize="16sp" />
+        </LinearLayout>
     </LinearLayout>
 
     <!-- 하단 네비게이션 바 -->

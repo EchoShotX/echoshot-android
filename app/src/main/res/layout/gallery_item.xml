@@ -69,4 +69,29 @@
         app:layout_constraintBottom_toBottomOf="@id/thumbnailImageView"
         app:layout_constraintEnd_toEndOf="@id/thumbnailImageView"
         android:layout_margin="4dp"/>
+
+    <!-- 선택 체크 표시 (왼쪽 위 모서리) -->
+    <ImageView
+        android:id="@+id/selectionCheckCircle"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:visibility="gone"
+        android:src="@drawable/ic_check_circle_outline"
+        app:tint="#FFFFFF"
+        app:layout_constraintTop_toTopOf="@id/thumbnailImageView"
+        app:layout_constraintStart_toStartOf="@id/thumbnailImageView"
+        android:layout_marginTop="8dp"
+        android:layout_marginStart="8dp"/>
+
+    <!-- 선택 체크 표시 (체크된 경우) -->
+    <ImageView
+        android:id="@+id/selectionCheckFilled"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:visibility="gone"
+        android:src="@drawable/ic_check_circle_filled"
+        app:layout_constraintTop_toTopOf="@id/thumbnailImageView"
+        app:layout_constraintStart_toStartOf="@id/thumbnailImageView"
+        android:layout_marginTop="8dp"
+        android:layout_marginStart="8dp"/>
 </androidx.constraintlayout.widget.ConstraintLayout>
