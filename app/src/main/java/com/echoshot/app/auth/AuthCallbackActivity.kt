@@ -139,6 +139,7 @@ class AuthCallbackActivity : AppCompatActivity() {
     private fun navigateToMain() {
         val intent = Intent(this, CameraActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            putExtra("navigateTo", "profile")
         }
         startActivity(intent)
         finish()

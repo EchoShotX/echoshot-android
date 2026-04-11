@@ -12,8 +12,69 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center"
-        android:layout_marginTop="100dp"
+        android:layout_marginTop="50dp"
         android:padding="24dp">
+
+        <!-- 헤더 (알림 아이콘 및 설정) -->
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="20dp">
+
+            <!-- 알림 벨 컨테이너 (왼쪽) -->
+            <FrameLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_alignParentStart="true"
+                android:layout_centerVertical="true">
+
+                <ImageView
+                    android:id="@+id/notificationBell"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:src="@drawable/ic_notifications"
+                    android:contentDescription="알림"
+                    android:padding="4dp"
+                    android:background="?attr/selectableItemBackgroundBorderless" 
+                    android:clickable="true"
+                    android:focusable="true" />
+                
+                <!-- 알림 뱃지 (느낌표 배지) -->
+                 <androidx.cardview.widget.CardView
+                    android:id="@+id/notificationBadge"
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:layout_gravity="top|end"
+                    app:cardCornerRadius="7dp"
+                    app:cardBackgroundColor="#FF5252"
+                    app:cardElevation="2dp"
+                    android:visibility="gone">
+                     
+                     <TextView
+                         android:layout_width="wrap_content"
+                         android:layout_height="wrap_content"
+                         android:text="!"
+                         android:textColor="#FFFFFF"
+                         android:textSize="10sp"
+                         android:textStyle="bold"
+                         android:layout_gravity="center" />
+                 </androidx.cardview.widget.CardView>
+            </FrameLayout>
+
+            <!-- 설정 아이콘 (오른쪽) -->
+            <ImageView
+                android:id="@+id/btnSettings"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_settings"
+                android:layout_alignParentEnd="true"
+                android:layout_centerVertical="true"
+                android:contentDescription="설정"
+                android:padding="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless" 
+                android:clickable="true"
+                android:focusable="true"/>
+        </RelativeLayout>
 
         <!-- 프로필 이미지 -->
         <ImageView

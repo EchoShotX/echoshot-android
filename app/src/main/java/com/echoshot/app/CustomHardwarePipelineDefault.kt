@@ -466,6 +466,10 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
         @Volatile
         private var zoomLevel: Float = 1.0f
 
+        // ✅ 물리 렌즈별 센서 비율 정보 (비율 보정용)
+        private var sensorWidth: Int = 0
+        private var sensorHeight: Int = 0
+
         /** OpenGL texture for the SurfaceTexture provided to the camera */
         private var cameraTexId: Int = 0
 
@@ -605,23 +609,18 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
         // ✅ 센서에서 16:9로 센터-크롭 강제 적용
         private fun apply16x9Crop(builder: CaptureRequest.Builder, forcePhysicalId: String?) {
             val targetAR = 16f / 9f
-            if (forcePhysicalId.isNullOrEmpty()) {
-                val active = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
-                val cropRect = cropActiveToAspect(active, targetAR)
-                builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
-            } else {
-                try {
-                    val cameraManager = viewFinder.context.getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-                    val physChars = cameraManager.getCameraCharacteristics(forcePhysicalId)
-                    val active = physChars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
-                    val cropRect = cropActiveToAspect(active, targetAR)
-                    // 세션 생성 시 setPhysicalCameraId로 라우팅했으므로 일반 set 사용
-                    // 논리 카메라를 사용할 때는 setPhysicalCameraKey가 세션에 등록되지 않을 수 있음
-                    builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
-                } catch (e: Exception) {
-                    android.util.Log.w("CameraAspectRatio", "Failed to apply 16:9 crop: ${e.message}")
-                }
-            }
+            val cameraManager = viewFinder.context.getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            
+            // ✅ 현재 사용 중인 물리 렌즈의 특성을 직접 쿼리
+            val charsToUse = if (forcePhysicalId.isNullOrEmpty()) characteristics else cameraManager.getCameraCharacteristics(forcePhysicalId)
+            val active = charsToUse.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+            
+            // ✅ 비율 계산을 위한 하드웨어 해상도 저장
+            sensorWidth = active.width()
+            sensorHeight = active.height()
+
+            val cropRect = cropActiveToAspect(active, targetAR)
+            builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
         }
 
         // ✅ 센서 Active Array를 16:9로 센터-크롭
@@ -1157,9 +1156,37 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
 
             texture.getTransformMatrix(texMatrix)
 
-            // ======== 🔽 줌 로직 시작 ========
+            // ======== 🔽 망원 렌즈 보정 + 줌 로직 시작 ========
             val zoomLevel = zoomLevel.coerceIn(1.0f, 10.0f)
-            val scaleFactor = 1 / zoomLevel
+            val zoomScale = 1.0f / zoomLevel
+
+            // ✅ 1. 망원 렌즈 여부 판별 (Physical ID 존재 시 망원)
+            val isTeleLens = !physicalCameraId.isNullOrEmpty()
+
+            // ✅ 2~4: 망원 렌즈일 때만 비율 보정 적용
+            //    일반 와이드 카메라에서는 보정 없이 단순 줌만 적용
+            val finalScaleX: Float
+            val finalScaleY: Float
+
+            if (isTeleLens) {
+                // 망원 렌즈: 센서 비율 차이와 하드웨어 오프셋 보정 필요
+                val hardwareOffset = 1.0f / 1.137f
+
+                val physicalAR = if (sensorWidth > 0 && sensorHeight > 0) {
+                    sensorWidth.toFloat() / sensorHeight.toFloat()
+                } else {
+                    16f / 9f
+                }
+                val theoryCorrection = (16f / 9f) / physicalAR
+
+                finalScaleX = zoomScale
+                finalScaleY = zoomScale * theoryCorrection * hardwareOffset
+            } else {
+                // 일반 와이드 카메라: 보정 없이 균등 스케일
+                finalScaleX = zoomScale
+                finalScaleY = zoomScale
+            }
+            
             val translateToCenter = floatArrayOf(
                 1f, 0f, 0f, 0f,
                 0f, 1f, 0f, 0f,
@@ -1168,8 +1195,8 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
             )
 
             val scaleMatrix = floatArrayOf(
-                scaleFactor, 0f, 0f, 0f,
-                0f, scaleFactor, 0f, 0f,
+                finalScaleX, 0f, 0f, 0f,
+                0f, finalScaleY, 0f, 0f,
                 0f, 0f, 1f, 0f,
                 0f, 0f, 0f, 1f
             )
@@ -1190,7 +1217,7 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
             android.opengl.Matrix.multiplyMM(finalMatrix, 0, texMatrix, 0, zoomMatrix, 0)
 
             System.arraycopy(finalMatrix, 0, texMatrix, 0, 16)
-            // ======== 🔼 줌 로직 끝 ========
+            // ======== 🔼 망원 렌즈 보정 + 줌 로직 끝 ========
 
             if (outputIsFramebuffer) {
                 val flipMatrix = floatArrayOf(

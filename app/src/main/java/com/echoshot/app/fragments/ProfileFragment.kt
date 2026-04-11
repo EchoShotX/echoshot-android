@@ -19,12 +19,15 @@ import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
+import com.echoshot.app.R
 import com.echoshot.app.auth.AuthRepository
 import com.echoshot.app.auth.TokenManager
 import com.echoshot.app.databinding.FragmentProfileBinding
 import com.echoshot.app.network.RetrofitClient
 import com.echoshot.app.network.UserApiService
+import com.echoshot.app.repository.NotificationRepository
 import com.echoshot.app.utils.setupBottomNavigationBar
+import com.echoshot.app.CameraActivity
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -74,10 +77,20 @@ class ProfileFragment : Fragment() {
                 // 프로필에서 카메라로 이동
                 navigateToCamera()
             },
+            onArchiveClick = {
+                // 프로필에서 업로드 페이지로 이동
+                val action = ProfileFragmentDirections.actionProfileFragmentToFancamEditFragment()
+                findNavController().navigate(action)
+            },
             onProfileClick = {
                 // 프로필 페이지에서는 아무 동작 없음
             }
         )
+
+        // 알림 벨 버튼 클릭 로직
+        binding.notificationBell.setOnClickListener {
+             showNotifications()
+        }
 
         // 구글 로그인 버튼 클릭 로직
         binding.btnGoogleLogin.setOnClickListener {
@@ -86,13 +99,31 @@ class ProfileFragment : Fragment() {
 
         // 로그아웃 버튼 클릭 로직
         binding.btnLogout.setOnClickListener {
-            tokenManager.clearTokens()
-            android.widget.Toast.makeText(requireContext(), "로그아웃되었습니다", android.widget.Toast.LENGTH_SHORT).show()
-            updateUI()
+            handleLogout()
         }
         
         // 초기 UI 상태 업데이트
         updateUI()
+        
+        // 🔍 SSE 연결 상태 확인 로그
+        Log.d(TAG, "========== SSE 체인 연결 상태 확인 ==========")
+        Log.d(TAG, "🔗 eventSource 존재: ${NotificationRepository.isConnected()}")
+        Log.d(TAG, "🔗 실제 연결됨 (onOpen 호출됨): ${NotificationRepository.isConnectionEstablished()}")
+        Log.d(TAG, "🔔 hasUnreadNotification: ${NotificationRepository.hasUnreadNotification}")
+        Log.d(TAG, "📡 Flow 구독 시작...")
+        
+        // Flow 구독 시작
+        lifecycleScope.launch {
+            NotificationRepository.notificationFlow.collect { data ->
+                Log.d(TAG, "✨ ProfileFragment에서 SSE 이벤트 수신: $data")
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    view?.findViewById<View>(R.id.nav_profile_badge)?.visibility = View.VISIBLE
+                    view?.findViewById<View>(R.id.notificationBadge)?.visibility = View.VISIBLE
+                    Log.d(TAG, "✅ 배지 표시 완료!")
+                }
+            }
+        }
+        Log.d(TAG, "=============================================")
     }
     
     /**
@@ -113,12 +144,16 @@ class ProfileFragment : Fragment() {
             
             // 로그인된 경우 사용자 정보 조회
             fetchUserProfile()
+            binding.notificationBell.visibility = View.VISIBLE
         } else {
             // 로그인되지 않은 경우
+            binding.notificationBell.visibility = View.GONE
             binding.btnGoogleLogin.visibility = View.VISIBLE
             binding.btnLogout.visibility = View.GONE
             binding.userName.text = "비회원"
             binding.userEmail.text = ""
+            binding.userCredit.visibility = View.GONE
+            binding.userJoinedAt.visibility = View.GONE
         }
     }
     
@@ -172,6 +207,9 @@ class ProfileFragment : Fragment() {
                     val formattedDate = formatJoinedDate(profile.joinedAt)
                     binding.userJoinedAt.text = "가입일: $formattedDate"
                     binding.userJoinedAt.visibility = View.VISIBLE
+
+                    // SSE 연결 시작 (이미 연결되어 있다면 내부적으로 무시됨)
+                    NotificationRepository.connect(tokenManager)
                 } else {
                     Log.e(TAG, "사용자 정보 조회 실패 - code: ${response.code}, message: ${response.message}")
                     // 에러가 발생해도 로그인 상태는 유지
@@ -182,9 +220,24 @@ class ProfileFragment : Fragment() {
                     binding.userCredit.visibility = View.GONE
                     binding.userJoinedAt.visibility = View.GONE
                 }
+            } catch (e: retrofit2.HttpException) {
+                Log.e(TAG, "사용자 정보 조회 중 HTTP 예외 발생: ${e.code()}", e)
+                // 502, 401 등 서버 에러 시 로그아웃 처리
+                if (e.code() == 502 || e.code() == 401 || e.code() == 403) {
+                    Log.w(TAG, "서버 에러(${e.code()})로 인해 로그아웃 처리")
+                    forceLogout()
+                } else {
+                    // 다른 HTTP 에러는 로그인 상태 유지
+                    binding.btnGoogleLogin.visibility = View.GONE
+                    binding.btnLogout.visibility = View.VISIBLE
+                    binding.userName.text = "로그인됨"
+                    binding.userEmail.text = ""
+                    binding.userCredit.visibility = View.GONE
+                    binding.userJoinedAt.visibility = View.GONE
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "사용자 정보 조회 중 예외 발생", e)
-                // 에러가 발생해도 로그인 상태는 유지
+                // 일반 에러는 로그인 상태 유지
                 binding.btnGoogleLogin.visibility = View.GONE
                 binding.btnLogout.visibility = View.VISIBLE
                 binding.userName.text = "로그인됨"
@@ -194,6 +247,85 @@ class ProfileFragment : Fragment() {
             }
         }
     }
+    
+    /**
+     * 강제 로그아웃 처리 (서버 에러 시)
+     */
+    private fun forceLogout() {
+        // SSE 연결 해제
+        NotificationRepository.disconnect()
+        // 토큰 삭제
+        tokenManager.clearTokens()
+        // 알림 배지 숨김
+        clearAllBadges()
+        // UI 업데이트
+        updateUI()
+        // 토스트 메시지
+        android.widget.Toast.makeText(
+            requireContext(), 
+            "서버 연결에 문제가 발생하여 로그아웃되었습니다.", 
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun handleLogout() {
+        lifecycleScope.launch {
+            try {
+                // 저장된 리프레시 토큰 가져오기
+                val refreshToken = tokenManager.getRefreshToken()
+                
+                if (!refreshToken.isNullOrBlank()) {
+                    // 서버에 로그아웃 요청
+                    val response = authRepository.logout(refreshToken)
+                    if (response.isSuccess) {
+                        Log.d(TAG, "서버 로그아웃 성공")
+                    } else {
+                        Log.e(TAG, "서버 로그아웃 실패: ${response.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "로그아웃 처리 중 오류 발생", e)
+            } finally {
+                // 서버 응답과 무관하게 로컬 데이터 클리어 및 연결 해제
+                NotificationRepository.disconnect()
+                tokenManager.clearTokens()
+                // 알림 배지 숨김
+                clearAllBadges()
+                android.widget.Toast.makeText(requireContext(), "로그아웃되었습니다", android.widget.Toast.LENGTH_SHORT).show()
+                updateUI()
+            }
+        }
+    }
+
+    /**
+     * 알림 목록을 BottomSheet로 표시합니다.
+     */
+    private fun showNotifications() {
+        // 알림 배지 숨김 (벨 클릭 시)
+        clearAllBadges()
+        
+        val bottomSheet = NotificationBottomSheetFragment.newInstance()
+        bottomSheet.show(parentFragmentManager, NotificationBottomSheetFragment.TAG)
+    }
+    
+    /**
+     * 모든 알림 배지를 숨깁니다 (벨의 느낌표 + 하단 바의 점)
+     */
+    private fun clearAllBadges() {
+        // 읽지 않은 알림 플래그 초기화
+        NotificationRepository.clearUnreadFlag()
+        
+        // 프로필 헤더의 알림 배지 숨김
+        binding.notificationBadge.visibility = View.GONE
+        
+        // 하단 바의 프로필 배지 숨김
+        view?.findViewById<View>(R.id.nav_profile_badge)?.visibility = View.GONE
+        
+        // CameraActivity에도 알려주기
+        (activity as? CameraActivity)?.hideBadge()
+    }
+
+    // 기존 showNotificationDialog 등 삭제
     
     /**
      * ISO 8601 형식의 날짜 문자열을 읽기 쉬운 형식으로 변환합니다.

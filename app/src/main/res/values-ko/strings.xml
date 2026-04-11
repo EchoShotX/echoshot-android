@@ -11,6 +11,7 @@
     <string name="camera">카메라</string>
     <string name="guide">가이드</string>
     <string name="move">이동</string>
+    <string name="auto_start_camera">앱 시작 시 카메라 자동 실행</string>
     
     <!-- Buttons -->
     <string name="auto_crop">자동 구도 생성</string>
@@ -25,6 +26,8 @@
     
     <!-- Dialog -->
     <string name="premium_video">프리미엄 영상</string>
+    <string name="premium_video_creating">프리미엄 영상 만들고 있어요</string>
+    <string name="wait_for_completion">촬영/편집은 완료될 때까지 잠시만 기다려주세요</string>
     <string name="base_video_not_found">기준 영상을 찾을 수 없습니다.</string>
     <string name="estimated_time">예상 약 %d초</string>
     <string name="estimated_time_remaining">예상 약 %d초 남음</string>
@@ -75,5 +78,31 @@
     <string name="guide_desc_4">분석이 끝나면 인물을 크게, 안정된 구도로 다시 볼 수 있습니다.</string>
     <string name="next">다음</string>
     <string name="confirm">확인</string>
+    
+    <!-- Error Messages for Tracking -->
+    <string name="error_log_file_not_found">추적 데이터에 접근할 수 없습니다. 파일이 삭제되었을 수 있습니다. 다시 촬영해주세요.</string>
+    <string name="error_device_low_spec">이 기기는 추적 기능을 지원하지 않습니다. 기기 사양이 낮습니다.</string>
+    
+    <!-- Permission -->
+    <string name="permission_camera_required_title">카메라 권한 필요</string>
+    <string name="permission_camera_required_message">EchoShot은 카메라 앱입니다.\n카메라 권한 없이는 앱을 사용할 수 없습니다.\n\n설정에서 카메라 권한을 허용해주세요.</string>
+    <string name="permission_go_to_settings">설정으로 이동</string>
+    <string name="permission_exit_app">앱 종료</string>
+    <string name="permission_cancel">취소</string>
+    <string name="permission_cannot_open_settings">설정을 열 수 없습니다</string>
+    
+    <!-- Fancam Edit -->
+    <string name="fancam_edit_title">편집 시작</string>
+    <string name="fancam_show_more">더 보기</string>
+    <string name="fancam_select_video">편집할 영상 선택</string>
+    <string name="fancam_processing">처리 중…</string>
+    <string name="fancam_history_title">편집 기록</string>
+    <string name="fancam_history_delete_confirm">이 히스토리 항목을 삭제하시겠습니까?</string>
+    <string name="delete_button">삭제</string>
+    <string name="close_button">취소</string>
+    
+    <string name="fancam_mode_single">단일영상</string>
+    <string name="fancam_mode_auto_fast">빠른추적</string>
+    <string name="fancam_mode_auto_high">고성능추적</string>
+    <string name="fancam_mode_hybrid">인물선택</string>
 </resources>
-

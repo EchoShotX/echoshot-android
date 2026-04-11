@@ -7,13 +7,17 @@ import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
+/**
+ * PhotoFragment (사진 촬영)용 줌 룰러 어댑터
+ * 기존 스타일 유지
+ */
 class ZoomRulerAdapter(
     private val minZoom: Float,
     private val midZoom: Float,
     private val maxZoom: Float,
-    private val ticksPerLogUnit: Int = 80,   // ← val로 보관
+    private val ticksPerLogUnit: Int = 25,   // PhotoFragment용 기본값
     private val itemWidthDp: Int = 12,
-    private val minLeftTicks: Int = 0,       // ← 하한을 파라미터로
+    private val minLeftTicks: Int = 0,
     private val minRightTicks: Int = 0
 ) : RecyclerView.Adapter<ZoomRulerAdapter.VH>() {
 
@@ -80,8 +84,8 @@ class ZoomRulerAdapter(
         val v = ZoomTickView(parent.context)
         val density = parent.resources.displayMetrics.density
         val w = (density * itemWidthDp).toInt()
-        val h = (density * 56).toInt()
-        v.layoutParams = ViewGroup.LayoutParams(w, h)
+        // ✅ 높이를 match_parent로 하여 RecyclerView 전체 높이 사용
+        v.layoutParams = ViewGroup.LayoutParams(w, ViewGroup.LayoutParams.MATCH_PARENT)
         return VH(v)
     }
 

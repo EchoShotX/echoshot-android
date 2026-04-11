@@ -26,6 +26,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
 import com.echoshot.app.LogFormat
+import com.echoshot.app.OutputResolution
 import com.echoshot.app.R
 import com.echoshot.app.VideoPipeline
 import com.echoshot.app.mp4detact.LogOrchestrator
@@ -39,6 +40,7 @@ import com.echoshot.app.mp4detact.models.face.FaceEmbedder
 import com.echoshot.app.mp4detact.io.JsonLogger
 import com.echoshot.app.mp4detact.engine.GlCtx
 import com.echoshot.app.mp4detact.io.HybridLogOrchestrator
+import com.echoshot.app.utils.FancamHistoryManager
 import kotlinx.coroutines.*
 import org.opencv.core.Rect
 import java.util.concurrent.Executors
@@ -59,12 +61,14 @@ class HybridPickerDialogFragment : DialogFragment() {
     private lateinit var iv: ImageView
     private lateinit var overlay: RectOverlayView
     private lateinit var toggleCropMode: MaterialButtonToggleGroup
+    private lateinit var toggleResolution: MaterialButtonToggleGroup
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         val root = layoutInflater.inflate(R.layout.dialog_multi_hybrid_picker, null)
         iv = root.findViewById(R.id.ivFrame)
         overlay = root.findViewById(R.id.overlay)
         toggleCropMode = root.findViewById(R.id.toggleCropMode)
+        toggleResolution = root.findViewById(R.id.toggleResolution)
         val startButton: Button = root.findViewById(R.id.startButton)
         val btnSmaller: Button = root.findViewById(R.id.btnSmaller)
         val btnBigger: Button = root.findViewById(R.id.btnBigger)
@@ -118,6 +122,19 @@ class HybridPickerDialogFragment : DialogFragment() {
         
         // 기본 모드 설정 (인물중심 모드 선택)
         toggleCropMode.check(R.id.btnCenterMode)
+        
+        // 해상도 선택 기본값: FHD
+        if (toggleResolution.checkedButtonId == View.NO_ID) {
+            toggleResolution.check(R.id.btnFHD)
+        }
+        
+        // 해상도 가져오기
+        fun getOutputResolution(): OutputResolution = when (toggleResolution.checkedButtonId) {
+            R.id.btnHD -> OutputResolution.HD
+            R.id.btnFHD -> OutputResolution.FHD
+            R.id.btnUHD -> OutputResolution.UHD
+            else -> OutputResolution.FHD
+        }
 
         startButton.setOnClickListener {
             val rView = overlay.getRectViewSpace()
@@ -144,12 +161,35 @@ class HybridPickerDialogFragment : DialogFragment() {
                 return@setOnClickListener
             }
 
+            // 선택된 모드에 따른 paddingFactor 결정
+            val paddingFactor = when (toggleCropMode.checkedButtonId) {
+                R.id.btnCenterMode -> 2f  // 인물중심 모드
+                R.id.btnWideMode -> 3f    // 와이드 모드
+                else -> 2.0f                // 기본값
+            }
+
             startButton.isEnabled = false; startButton.text = "실행 중…"
 
             // ETA 계산 및 진행 다이얼로그 표시
             val durMs = getVideoDurationMs(requireContext(), originalUri)
             val etaSec = estimateSecondsHigh(durMs)
             showBlockingProgress(etaSec)
+
+            // ✅ 히스토리 등록: 인물선택 (hybrid) - 실제 해상도와 패딩 반영
+            val historyEntry = FancamHistoryManager.HistoryEntry(
+                id = sessionUuid,
+                fileName = fileName,
+                createdAt = System.currentTimeMillis(),
+                status = "processing",
+                originalWidth = srcW,
+                originalHeight = srcH,
+                paddingFactor = paddingFactor,
+                outputResolution = getOutputResolution().name,
+                outputFilePath = null,
+                thumbnailPath = null,
+                editMode = "hybrid"
+            )
+            FancamHistoryManager.addEntry(requireContext(), historyEntry)
 
             // 하이브리드 프로세서 실행 (탐지는 original에서)
             android.util.Log.d("HybridPicker", "탐지 대상 비디오: ${originalUri}")
@@ -166,7 +206,7 @@ class HybridPickerDialogFragment : DialogFragment() {
                     val tsUri       = findLatestMediaUri(ctx, "tracking_log_${sessionUuid}_frame_ts", "json")
 
                     if (trackingUri == null || tsUri == null) {
-                        Toast.makeText(ctx, "tracking/ts 로그를 찾지 못했습니다.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(ctx, getString(R.string.error_log_file_not_found), Toast.LENGTH_LONG).show()
                         startButton.isEnabled = true; startButton.text = "시작"
                         return@runHybridProcessor
                     }
@@ -209,6 +249,9 @@ class HybridPickerDialogFragment : DialogFragment() {
                             
                             android.util.Log.d("HybridPicker", "선택된 모드: ${if (toggleCropMode.checkedButtonId == R.id.btnCenterMode) "인물중심" else "와이드"}, paddingFactor: $paddingFactor")
                             
+                            val outputResolution = getOutputResolution()
+                            android.util.Log.d("HybridPicker", "선택된 해상도: ${outputResolution.displayName} (${outputResolution.width}x${outputResolution.height})")
+                            
                             val cropped = com.echoshot.app.VideoPipeline.processSessionFromLog(
                                 context = ctx,
                                 sessionId = sessionUuid,
@@ -216,16 +259,23 @@ class HybridPickerDialogFragment : DialogFragment() {
                                 fps = 30,
                                 paddingFactor = paddingFactor,
                                 logFile = result.mergedLocalFile,
-                                format = com.echoshot.app.LogFormat.MERGED_JSONL
+                                format = com.echoshot.app.LogFormat.MERGED_JSONL,
+                                outputResolution = outputResolution
                             )
 
                             withContext(Dispatchers.Main) {
                                 if (!isAdded) return@withContext  // 안전장치
                                 dismissBlockingProgress()
                                 if (cropped != null) {
+                                    // 히스토리 상태 업데이트: 완료
+                                    FancamHistoryManager.updateStatus(ctx, sessionUuid, "complete", cropped.toString())
+                                    
                                     Toast.makeText(ctx, "병합 + 크롭 완료!", Toast.LENGTH_SHORT).show()
                                     dismissAllowingStateLoss()
                                 } else {
+                                    // 히스토리 상태 업데이트: 실패
+                                    FancamHistoryManager.updateStatus(ctx, sessionUuid, "failed")
+                                    
                                     Toast.makeText(ctx, "크롭 결과가 생성되지 않았습니다.", Toast.LENGTH_LONG).show()
                                     startButton.isEnabled = true; startButton.text = "시작"
                                 }
@@ -233,6 +283,10 @@ class HybridPickerDialogFragment : DialogFragment() {
                         } catch (e: Throwable) {
                             withContext(Dispatchers.Main) {
                                 if (!isAdded) return@withContext
+                                
+                                // 히스토리 상태 업데이트: 실패
+                                FancamHistoryManager.updateStatus(ctx, sessionUuid, "failed")
+                                
                                 dismissBlockingProgress()
                                 Toast.makeText(ctx, "후처리 실패: ${e.message}", Toast.LENGTH_LONG).show()
                                 startButton.isEnabled = true; startButton.text = "시작"

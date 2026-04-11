@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EchoShotX</string>
+    <string name="capture">Chụp ảnh</string>
+    <string name="error_file_not_found">Không tìm thấy tệp đã ghi</string>
+    <string name="recorder_shutdown_error">Ghi hình quá ngắn. Vui lòng nhấn giữ lâu hơn.</string>
+
+    <!-- Home Fragment -->
+    <string name="shoot">Quay video</string>
+    <string name="quick_guide">Hướng dẫn nhanh</string>
+    <string name="camera">Máy ảnh</string>
+    <string name="guide">Hướng dẫn</string>
+    <string name="move">Đi đến</string>
+    <string name="auto_start_camera">Tự động mở máy ảnh khi khởi động</string>
+
+    <!-- Buttons -->
+    <string name="auto_crop">Bố cục tự động</string>
+    <string name="manual_crop">Chọn người thủ công</string>
+    <string name="start">Bắt đầu</string>
+    <string name="center_mode">Tâm điểm</string>
+    <string name="wide_mode">Góc rộng</string>
+    <string name="fast_track">Track nhanh</string>
+    <string name="high_spec_track">Track cao</string>
+    <string name="smaller">Nhỏ hơn</string>
+    <string name="bigger">Lớn hơn</string>
+
+    <!-- Dialog -->
+    <string name="premium_video">Video cao cấp</string>
+    <string name="premium_video_creating">Đang tạo video cao cấp...</string>
+    <string name="wait_for_completion">Vui lòng chờ quá trình ghi/chỉnh sửa hoàn tất</string>
+    <string name="base_video_not_found">Không tìm thấy video gốc.</string>
+    <string name="estimated_time">Ước tính %d giây</string>
+    <string name="estimated_time_remaining">Còn lại %d giây</string>
+    <string name="please_wait">Vui lòng chờ giây lát…</string>
+    <string name="start_with_mode">Bắt đầu (%1$s)\nƯớc tính: %2$d giây</string>
+    <string name="fast_crop_complete">Track nhanh hoàn tất!</string>
+    <string name="crop_failed">Cắt khung hình thất bại</string>
+    <string name="error_occurred">Đã xảy ra lỗi</string>
+    <string name="close">Đóng</string>
+    <string name="high_spec_crop_complete">Track cao hoàn tất!</string>
+    <string name="high_spec_failed">Track cao thất bại</string>
+
+    <!-- Gallery -->
+    <string name="gallery">Thư viện</string>
+    <string name="extended_gallery">Thư viện mở rộng</string>
+    <string name="today">Hôm nay</string>
+    <string name="yesterday">Hôm qua</string>
+    <string name="cannot_get_filename">Không thể lấy tên tệp.</string>
+    <string name="invalid_filename">Tên tệp không hợp lệ</string>
+    <string name="delete">Xóa</string>
+    <string name="delete_single_item">Xóa mục này?</string>
+    <string name="delete_multiple_items">Xóa %d mục?</string>
+    <string name="item_deleted">Đã xóa mục</string>
+    <string name="items_deleted">Đã xóa %d mục</string>
+    <string name="selected_count">Đã chọn %d</string>
+    <string name="open_system_gallery">Mở thư viện hệ thống</string>
+    <string name="cannot_open_gallery">Không thể mở thư viện</string>
+    <string name="delete_permission_required">Cần cấp quyền để xóa tệp</string>
+    <string name="delete_permission_denied">Từ chối quyền. Không thể xóa tệp.</string>
+
+    <!-- Camera Mode -->
+    <string name="photo">Ảnh</string>
+    <string name="video">Video</string>
+    <string name="already_video_mode">Đang ở chế độ video</string>
+    <string name="already_photo_mode">Đang ở chế độ ảnh</string>
+    <string name="photo_saved">Đã lưu ảnh!</string>
+    <string name="photo_save_failed">Lưu ảnh thất bại</string>
+    <string name="photo_capture_failed">Chụp ảnh thất bại</string>
+
+    <!-- Guide Dialog -->
+    <string name="guide_title_1">Zoom &amp; Quay Như Máy Ảnh Thường</string>
+    <string name="guide_desc_1">Dùng hai ngón tay để phóng to/thu nhỏ và quay video theo ý muốn.</string>
+    <string name="guide_title_2">Kiểm Tra Video Trong Thư Viện</string>
+    <string name="guide_desc_2">Xem cả video đã quay và phiên bản góc rộng được lưu cùng lúc.</string>
+    <string name="guide_title_3">Tạo Video Tập Trung Vào Người</string>
+    <string name="guide_desc_3">Chọn chế độ và nhấn \'Bắt đầu\' để tạo video tập trung hoàn hảo vào chủ thể.</string>
+    <string name="guide_title_4">Thưởng Thức Fancam Theo Dõi Tự Động</string>
+    <string name="guide_desc_4">Sau khi xử lý, xem chủ thể được phóng lớn với khung hình ổn định.</string>
+    <string name="next">Tiếp theo</string>
+    <string name="confirm">Xong</string>
+    
+    <!-- Error Messages for Tracking -->
+    <string name="error_log_file_not_found">Không thể truy cập dữ liệu theo dõi. File có thể đã bị xóa. Vui lòng quay lại.</string>
+    <string name="error_device_low_spec">Thiết bị này không hỗ trợ tính năng theo dõi. Cấu hình thiết bị quá thấp.</string>
+    
+    <!-- Permission -->
+    <string name="permission_camera_required_title">Yêu Cầu Quyền Camera</string>
+    <string name="permission_camera_required_message">EchoShot là ứng dụng camera.\nCần quyền camera để sử dụng ứng dụng này.\n\nVui lòng cho phép quyền camera trong Cài đặt.</string>
+    <string name="permission_go_to_settings">Mở Cài đặt</string>
+    <string name="permission_exit_app">Thoát</string>
+    <string name="permission_cancel">Hủy</string>
+    <string name="permission_cannot_open_settings">Không thể mở cài đặt</string>
+    <string name="fancam_history_delete_confirm">Are you sure you want to delete this history item?</string>
+    <string name="delete_button">Delete</string>
+    <string name="close_button">Cancel</string>
+    <string name="fancam_mode_single">Single Video</string>
+    <string name="fancam_mode_auto_fast">Fast Track</string>
+    <string name="fancam_mode_auto_high">High Spec Track</string>
+    <string name="fancam_mode_hybrid">Hybrid Picker</string>
+    <string name="fancam_edit_title">Bắt đầu chỉnh sửa</string>
+    <string name="fancam_show_more">SEM THÊM</string>
+    <string name="fancam_select_video">Chọn Video để chỉnh sửa</string>
+    <string name="fancam_processing">Đang xử lý…</string>
+    <string name="fancam_history_title">Lịch sử chỉnh sửa</string>
+</resources>

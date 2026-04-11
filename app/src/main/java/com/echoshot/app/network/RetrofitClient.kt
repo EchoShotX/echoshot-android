@@ -7,6 +7,8 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
+import okhttp3.sse.EventSource
+import okhttp3.sse.EventSources
 
 object RetrofitClient {
     const val BASE_URL = "http://ec2-3-35-23-240.ap-northeast-2.compute.amazonaws.com"
@@ -52,6 +54,39 @@ object RetrofitClient {
             .client(authenticatedOkHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
+    }
+
+    /**
+     * 인증된 OkHttpClient를 사용하는 EventSource.Factory를 반환합니다.
+     * SSE는 gzip 압축과 호환되지 않을 수 있어서 압축 비활성화
+     */
+    fun createEventSourceFactory(tokenManager: TokenManager): EventSource.Factory {
+        val authInterceptor = AuthInterceptor(tokenManager)
+        
+        // SSE 전용 로깅 (헤더만, 바디 제외)
+        val sseLoggingInterceptor = HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.HEADERS
+        }
+        
+        // SSE에서 gzip 압축 비활성화
+        val noGzipInterceptor = okhttp3.Interceptor { chain ->
+            val originalRequest = chain.request()
+            val requestWithNoGzip = originalRequest.newBuilder()
+                .header("Accept-Encoding", "identity")  // gzip 대신 압축 안 함
+                .build()
+            chain.proceed(requestWithNoGzip)
+        }
+
+        val authenticatedOkHttpClient = OkHttpClient.Builder()
+            .addInterceptor(authInterceptor)
+            .addInterceptor(noGzipInterceptor)  // gzip 비활성화
+            .addNetworkInterceptor(sseLoggingInterceptor)  // Network 레벨 로깅
+            .connectTimeout(0, TimeUnit.SECONDS) // SSE는 무제한 타임아웃 권장
+            .readTimeout(0, TimeUnit.SECONDS)
+            .writeTimeout(0, TimeUnit.SECONDS)
+            .build()
+
+        return EventSources.createFactory(authenticatedOkHttpClient)
     }
 }
 

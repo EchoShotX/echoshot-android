@@ -24,22 +24,26 @@ class PoseMoveNetAdapter(
 
     companion object { private const val TAG = "PoseMoveNetAdapter" }
 
-    private val impl: MoveNetMultiPose = MoveNetMultiPose.create(
+    // ✅ nullable로 변경 (TFLite 로드 실패 시 null)
+    private val impl: MoveNetMultiPose? = MoveNetMultiPose.create(
         context = ctx,
         device = Device.CPU,
         type = Type.Dynamic
-    ).apply {
+    )?.apply {
         setTracker(TrackerType.OFF)
     }
+    
+    /** TFLite 로드 성공 여부 */
+    val isAvailable: Boolean get() = impl != null
 
     override fun open() {
         // [LOG]
-        Log.i(TAG, "open() inputSize=$letterboxInputSize")
+        Log.i(TAG, "open() inputSize=$letterboxInputSize isAvailable=$isAvailable")
     }
 
     override fun close() {
         Log.i(TAG, "close()")
-        impl.close()
+        impl?.close()
     }
 
     override fun estimateHead(
@@ -64,7 +68,15 @@ class PoseMoveNetAdapter(
             return Keypoints(null, 0f)
         }
 
-        val persons = impl.estimatePoses(croppedBmp)
+        // ✅ TFLite 로드 실패 시 빈 결과 반환
+        val poseImpl = impl
+        if (poseImpl == null) {
+            Log.w(TAG, "estimateHead() MoveNet not available (TFLite load failed)")
+            croppedBmp.recycle()
+            return Keypoints(null, 0f)
+        }
+
+        val persons = poseImpl.estimatePoses(croppedBmp)
         Log.d(TAG, "estimateHead() persons.size=${persons.size}")
 
         if (persons.isEmpty()) {

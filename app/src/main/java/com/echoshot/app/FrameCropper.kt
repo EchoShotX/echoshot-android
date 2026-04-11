@@ -14,6 +14,15 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import kotlin.math.*
 
+/**
+ * 출력 해상도 옵션 (9:16 비율 기준)
+ */
+enum class OutputResolution(val width: Int, val height: Int, val displayName: String) {
+    HD(720, 1280, "HD"),
+    FHD(1080, 1920, "FHD"),
+    UHD(2160, 3840, "UHD")
+}
+
 
 
 // =======================================================
@@ -133,6 +142,7 @@ class FrameCropper(
     private val paddingFactor: Float,
     private val logPath: String,          // ★ 추가
     private val logFormat: LogFormat,      // ★ 추가
+    private val outputResolution: OutputResolution = OutputResolution.FHD,  // ✅ 출력 해상도
     private val debugJsonPath: String? = null
 ) {
     private val TAG = "FrameCropper"
@@ -366,7 +376,13 @@ class FrameCropper(
 
         val mime = MediaFormat.MIMETYPE_VIDEO_AVC
         val encoder = MediaCodec.createEncoderByType(mime)
-        val outFmt = MediaFormat.createVideoFormat(mime, inW, inH).apply {
+        
+        // ✅ 출력 해상도 설정 (9:16 비율)
+        val outW = outputResolution.width
+        val outH = outputResolution.height
+        Log.d(TAG, "출력 비디오 포맷 해상도: ${outW}x${outH} (${outputResolution.displayName})")
+        
+        val outFmt = MediaFormat.createVideoFormat(mime, outW, outH).apply {
             setInteger(MediaFormat.KEY_BIT_RATE, 5_000_000)
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
@@ -543,7 +559,8 @@ class FrameCropper(
                         lastPtsUs = ptsUs
                         maxPresentedPtsUs = maxOf(maxPresentedPtsUs, ptsUs)
 
-                        GLES20.glViewport(0, 0, inW, inH)
+                        // ✅ FHD 해상도로 뷰포트 설정
+                        GLES20.glViewport(0, 0, outW, outH)
                         renderer.drawFrame(textureId, finalM)
                         EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, ptsUs * 1000L)
                         EGL14.eglSwapBuffers(eglDisplay, eglSurface)
@@ -699,7 +716,8 @@ class FrameCropper(
                             lastPtsUs = ptsUs
                             maxPresentedPtsUs = maxOf(maxPresentedPtsUs, ptsUs)
 
-                            GLES20.glViewport(0, 0, inW, inH)
+                            // ✅ FHD 해상도로 뷰포트 설정
+                            GLES20.glViewport(0, 0, outW, outH)
                             renderer.drawFrame(textureId, finalM)
                             EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, ptsUs * 1000L)
                             EGL14.eglSwapBuffers(eglDisplay, eglSurface)

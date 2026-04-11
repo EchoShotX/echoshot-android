@@ -7,6 +7,10 @@ import android.util.AttributeSet
 import android.view.View
 import androidx.core.content.ContextCompat
 
+/**
+ * PhotoFragment (사진 촬영)용 줌 눈금 뷰
+ * 눈금이 중앙에 그려지는 기존 스타일
+ */
 class ZoomTickView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : View(context, attrs) {
@@ -33,14 +37,21 @@ class ZoomTickView @JvmOverloads constructor(
         val w = width.toFloat()
         val h = height.toFloat()
         val cx = w / 2f
-        val top = if (isMajor) h * 0.15f else h * 0.30f
-        val bottom = h * 0.75f
+        
+        // ✅ PhotoFragment용: 중앙에 눈금 그리기 (기존 스타일)
+        val centerY = h / 2f
+        val majorHalfLen = h * 0.35f  // PhotoFragment용 눈금 길이
+        val minorHalfLen = h * 0.20f
+        
+        val halfLen = if (isMajor) majorHalfLen else minorHalfLen
+        val top = centerY - halfLen
+        val bottom = centerY + halfLen
         val p = if (isMajor) tickPaint else minorTickPaint
 
         c.drawLine(cx, top, cx, bottom, p)
 
         label?.let {
-            val y = bottom + (h * 0.18f)
+            val y = bottom + (h * 0.15f)
             c.drawText(it, cx, y, textPaint)
         }
     }

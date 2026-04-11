@@ -24,9 +24,11 @@ import androidx.lifecycle.lifecycleScope
 import com.bumptech.glide.Glide
 import com.echoshot.app.R
 import com.echoshot.app.LogFormat
+import com.echoshot.app.OutputResolution
 import com.echoshot.app.VideoPipeline
 import com.echoshot.app.mp4detact.LogOrchestrator
 import com.echoshot.app.mp4detact.PoseLogOrchestrator
+import com.echoshot.app.utils.FancamHistoryManager
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.chaquo.python.Python
 import kotlinx.coroutines.*
@@ -83,8 +85,22 @@ class MakeAutoDetactionFragment : DialogFragment() {
         val btnStart = root.findViewById<Button>(R.id.startButton)
         val toggleCrop = root.findViewById<MaterialButtonToggleGroup>(R.id.toggleCropMode)
         val toggleTrack = root.findViewById<MaterialButtonToggleGroup>(R.id.toggleTrackMode)
+        val toggleResolution = root.findViewById<MaterialButtonToggleGroup>(R.id.toggleResolution)
 
         Glide.with(this).load(targetUri).centerCrop().into(iv)
+
+        // 해상도 선택 기본값: FHD
+        if (toggleResolution.checkedButtonId == View.NO_ID) {
+            toggleResolution.check(R.id.btnFHD)
+        }
+
+        // 해상도 가져오기
+        fun getOutputResolution(): OutputResolution = when (toggleResolution.checkedButtonId) {
+            R.id.btnHD -> OutputResolution.HD
+            R.id.btnFHD -> OutputResolution.FHD
+            R.id.btnUHD -> OutputResolution.UHD
+            else -> OutputResolution.FHD
+        }
 
         // 1) DISPLAY_NAME → sessionUuid
         val fileName = ctx.contentResolver
@@ -145,8 +161,8 @@ class MakeAutoDetactionFragment : DialogFragment() {
             btnStart.text = getString(R.string.start_with_mode, modeLabel, etaSec)
         }
         updateStartLabel()
-        toggleCrop.addOnButtonCheckedListener { _, _, _ -> updateStartLabel() }
-        toggleTrack.addOnButtonCheckedListener { _, _, _ -> updateStartLabel() }
+        toggleCrop.addOnButtonCheckedListener { group, checkedId, isChecked -> updateStartLabel() }
+        toggleTrack.addOnButtonCheckedListener { group, checkedId, isChecked -> updateStartLabel() }
 
         // 시작 버튼
         btnStart.setOnClickListener {
@@ -160,13 +176,37 @@ class MakeAutoDetactionFragment : DialogFragment() {
             when (trackMode) {
                 TrackMode.FAST -> {
                     // ===== 빠른 추적: 기존 로그로 즉시 크롭 =====
+                    val trackingUri = findMediaUri(ctx, "tracking_log_${sessionUuid}", "json")
+                    val tsUri       = findMediaUri(ctx, "tracking_log_${sessionUuid}_frame_ts", "json")
+                    
+                    // ✅ 추적 데이터 없음 체크 (파일 삭제됨 또는 저사양 기기)
+                    if (trackingUri == null || tsUri == null) {
+                        Toast.makeText(ctx, getString(R.string.error_log_file_not_found), Toast.LENGTH_LONG).show()
+                        return@setOnClickListener
+                    }
+                    
                     val durMs = getVideoDurationMs(ctx, baseUriToProcess)
+                    val (vWidth, vHeight) = getVideoSize(ctx, baseUriToProcess)
                     showBlockingProgress(estimateSeconds(durMs))
+                    
+                    // ✅ 히스토리 등록: 빠른추적 (auto_fast)
+                    val historyEntry = FancamHistoryManager.HistoryEntry(
+                        id = sessionUuid,
+                        fileName = fileName,
+                        createdAt = System.currentTimeMillis(),
+                        status = "processing",
+                        originalWidth = vWidth,
+                        originalHeight = vHeight,
+                        paddingFactor = paddingFactor,
+                        outputResolution = getOutputResolution().name,
+                        outputFilePath = null,
+                        thumbnailPath = null,
+                        editMode = "auto_fast"
+                    )
+                    FancamHistoryManager.addEntry(ctx, historyEntry)
+                    
                     lifecycleScope.launch(Dispatchers.IO) {
                         try {
-                            val trackingUri = findMediaUri(ctx, "tracking_log_${sessionUuid}", "json")
-                            val tsUri       = findMediaUri(ctx, "tracking_log_${sessionUuid}_frame_ts", "json")
-
                             // ① 로그 생성(파이썬 파이프라인)
                             val outJson = generateLogFromSession(ctx, sessionUuid, trackingUri, tsUri, ctx.filesDir)
                             // ② 크롭
@@ -177,11 +217,15 @@ class MakeAutoDetactionFragment : DialogFragment() {
                                 videoUriToProcess = baseUriToProcess,
                                 fps = getVideoFps(ctx, baseUriToProcess) ?: 30,
                                 paddingFactor = paddingFactor,
-                                logFormat = LogFormat.PROCESSED_JSON
+                                logFormat = LogFormat.PROCESSED_JSON,
+                                outputResolution = getOutputResolution()
                             )
                             withContext(Dispatchers.Main) {
                                 dismissBlockingProgress()
                                 if (croppedUri != null) {
+                                    // 히스토리 상태 업데이트: 완료
+                                    FancamHistoryManager.updateStatus(ctx, sessionUuid, "complete", croppedUri.toString())
+                                    
                                     Toast.makeText(ctx, getString(R.string.fast_crop_complete), Toast.LENGTH_SHORT).show()
                                     (parentFragment as? Callbacks ?: activity as? Callbacks)?.refreshGallery()
                                     dismissAllowingStateLoss()
@@ -191,6 +235,9 @@ class MakeAutoDetactionFragment : DialogFragment() {
                             }
                         } catch (e: Exception) {
                             withContext(Dispatchers.Main) {
+                                // 히스토리 상태 업데이트: 실패
+                                FancamHistoryManager.updateStatus(ctx, sessionUuid, "failed")
+                                
                                 dismissBlockingProgress()
                                 AlertDialog.Builder(ctx)
                                     .setMessage("${getString(R.string.error_occurred)}:\n${e.message}")
@@ -247,7 +294,8 @@ class MakeAutoDetactionFragment : DialogFragment() {
                                 fps = fpsForCrop,
                                 paddingFactor = paddingFactor,
                                 logFile = mergedFile,
-                                format = LogFormat.MERGED_JSONL
+                                format = LogFormat.MERGED_JSONL,
+                                outputResolution = getOutputResolution()
                             )
 
                             withContext(Dispatchers.Main) {
@@ -279,9 +327,32 @@ class MakeAutoDetactionFragment : DialogFragment() {
 
                     val trackingUri = findMediaUri(ctx, "tracking_log_${sessionUuid}", "json")
                     val tsUri       = findMediaUri(ctx, "tracking_log_${sessionUuid}_frame_ts", "json")
+                    
+                    // ✅ 추적 데이터 없음 체크 (파일 삭제됨 또는 저사양 기기)
+                    if (trackingUri == null || tsUri == null) {
+                        Toast.makeText(ctx, getString(R.string.error_log_file_not_found), Toast.LENGTH_LONG).show()
+                        return@setOnClickListener
+                    }
 
                     val durMs = getVideoDurationMs(ctx, videoUriForDetect)
+                    val (vWidth, vHeight) = getVideoSize(ctx, videoUriForDetect)
                     showBlockingProgress(estimateSecondsHigh(durMs))
+
+                    // ✅ 히스토리 등록: 고성능추적 (auto_high)
+                    val historyEntry = FancamHistoryManager.HistoryEntry(
+                        id = sessionUuid,
+                        fileName = fileName,
+                        createdAt = System.currentTimeMillis(),
+                        status = "processing",
+                        originalWidth = vWidth,
+                        originalHeight = vHeight,
+                        paddingFactor = paddingFactor,
+                        outputResolution = getOutputResolution().name,
+                        outputFilePath = null,
+                        thumbnailPath = null,
+                        editMode = "auto_high"
+                    )
+                    FancamHistoryManager.addEntry(ctx, historyEntry)
 
                     lifecycleScope.launch(Dispatchers.IO) {
                         try {
@@ -310,7 +381,6 @@ class MakeAutoDetactionFragment : DialogFragment() {
                                     .also { copyUriToFile(ctx, mergedLogUri, it) }
                             }
 
-                            @Suppress("UNUSED_VARIABLE")
                             val outUri = VideoPipeline.processSessionFromLog(
                                 context = ctx,
                                 sessionId = sessionUuid,
@@ -318,18 +388,32 @@ class MakeAutoDetactionFragment : DialogFragment() {
                                 fps = fpsForCrop,
                                 paddingFactor = paddingFactor,
                                 logFile = mergedFile,
-                                format = LogFormat.MERGED_JSONL
+                                format = LogFormat.MERGED_JSONL,
+                                outputResolution = getOutputResolution()
                             )
 
                             withContext(Dispatchers.Main) {
                                 dismissBlockingProgress()
-                                Toast.makeText(ctx, getString(R.string.high_spec_crop_complete), Toast.LENGTH_SHORT).show()
-                                (parentFragment as? Callbacks ?: activity as? Callbacks)?.refreshGallery()
-                                dismissAllowingStateLoss()
+                                if (outUri != null) {
+                                    // 히스토리 상태 업데이트: 완료
+                                    FancamHistoryManager.updateStatus(ctx, sessionUuid, "complete", outUri.toString())
+                                    
+                                    Toast.makeText(ctx, getString(R.string.high_spec_crop_complete), Toast.LENGTH_SHORT).show()
+                                    (parentFragment as? Callbacks ?: activity as? Callbacks)?.refreshGallery()
+                                    dismissAllowingStateLoss()
+                                } else {
+                                    // 히스토리 상태 업데이트: 실패
+                                    FancamHistoryManager.updateStatus(ctx, sessionUuid, "failed")
+                                    Toast.makeText(ctx, getString(R.string.crop_failed), Toast.LENGTH_SHORT).show()
+                                    dismissAllowingStateLoss()
+                                }
                             }
                         } catch (e: Throwable) {
                             Log.e(TAG, "HIGH-POSE failed", e)
                             withContext(Dispatchers.Main) {
+                                // 히스토리 상태 업데이트: 실패
+                                FancamHistoryManager.updateStatus(ctx, sessionUuid, "failed")
+                                
                                 dismissBlockingProgress()
                                 AlertDialog.Builder(ctx)
                                     .setMessage("${getString(R.string.high_spec_failed)}:\n${e.message}")
@@ -366,6 +450,18 @@ class MakeAutoDetactionFragment : DialogFragment() {
         return try {
             r.setDataSource(ctx, uri)
             (r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0L)
+        } finally { r.release() }
+    }
+
+    private fun getVideoSize(ctx: Context, uri: Uri): Pair<Int, Int> {
+        val r = MediaMetadataRetriever()
+        return try {
+            r.setDataSource(ctx, uri)
+            val w = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt() ?: 1080
+            val h = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt() ?: 1920
+            w to h
+        } catch (e: Exception) {
+            1080 to 1920
         } finally { r.release() }
     }
 
@@ -460,6 +556,7 @@ class MakeAutoDetactionFragment : DialogFragment() {
         copyIfExists(tsUri, tsFile)
 
         // Python(Chaquopy) 파이프라인 호출
+        // 큰 움직임은 따라가고 작은 움직임은 무시하도록 파라미터 조정
         val py  = Python.getInstance()
         val mod = py.getModule("make_log_pipeline")
         mod.callAttr(
@@ -467,7 +564,9 @@ class MakeAutoDetactionFragment : DialogFragment() {
             trackingFile.absolutePath,
             tsFile.absolutePath,
             outputJson.absolutePath,
-            0.2  // 예시: 신뢰도/스무딩 파라미터
+            20.0,  // q_pos_base: 과정잡음(위치) - 더 크면 더 부드러움
+            150.0, // q_vel_base: 과정잡음(속도) - 더 크면 더 부드러움
+            80.0   // r_meas_base: 관측잡음 - 더 크면 작은 움직임 무시, 큰 움직임만 따라감
         )
         return outputJson
     }
@@ -479,7 +578,8 @@ class MakeAutoDetactionFragment : DialogFragment() {
         videoUriToProcess: Uri,
         fps: Int,
         paddingFactor: Float,
-        logFormat: LogFormat
+        logFormat: LogFormat,
+        outputResolution: OutputResolution
     ): Uri? = withContext(Dispatchers.IO) {
         VideoPipeline.processSessionFromLog(
             context = ctx,
@@ -488,7 +588,8 @@ class MakeAutoDetactionFragment : DialogFragment() {
             fps = fps,
             paddingFactor = paddingFactor,
             logFile = outputJson,
-            format = logFormat
+            format = logFormat,
+            outputResolution = outputResolution
         )
     }
 

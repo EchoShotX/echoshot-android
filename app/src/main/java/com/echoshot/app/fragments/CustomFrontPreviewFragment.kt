@@ -56,6 +56,7 @@ import androidx.navigation.NavController
 import androidx.navigation.Navigation
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
+import com.echoshot.app.utils.DeploymentModeManager
 import com.echoshot.app.utils.setupBottomNavigationBar
 import com.example.android.camera.utils.getPreviewOutputSize
 import com.echoshot.app.BuildConfig
@@ -96,12 +97,14 @@ class CustomFrontPreviewFragment : Fragment() {
     private val fragmentBinding get() = _fragmentBinding!!
 
     // ★ 변경: 전면 전용 → 항상 HardwarePipeline 사용
-    private val pipeline: Pipeline by lazy {
+    // ✅ isInitialized() 체크를 위해 lazy 인스턴스를 별도 변수로 분리
+    private val _pipelineLazy = lazy {
         HardwarePipeline(
             args.width, args.height, args.fps, args.filterOn, args.transfer,
             args.dynamicRange, characteristics, encoder, fragmentBinding.viewFinder
         )
     }
+    private val pipeline: Pipeline get() = _pipelineLazy.value
 
     /** AndroidX navigation arguments */
     private val args: CustomFrontPreviewFragmentArgs by navArgs()
@@ -204,6 +207,11 @@ class CustomFrontPreviewFragment : Fragment() {
     private val isRecording = AtomicBoolean(false)
     private val isStopping = AtomicBoolean(false)
     
+    // ✅ 백그라운드 정리 작업 관리
+    private var cleanupJob: kotlinx.coroutines.Job? = null
+    @Volatile
+    private var isPausedForBackground = false
+    
     // ✅ 버튼 디바운스용
     @Volatile
     private var lastStopClick = 0L
@@ -302,6 +310,10 @@ class CustomFrontPreviewFragment : Fragment() {
                 findNavController().navigate(action)
             },
             onProfileClick = {
+                // 배포모드일 때는 프로필로 이동하지 않음
+                if (DeploymentModeManager.isDeploymentMode()) {
+                    return@setupBottomNavigationBar
+                }
                 // 전면 카메라에서 프로필로 이동
                 val action = CustomFrontPreviewFragmentDirections.actionCustomFrontPreviewFragmentToProfileFragment()
                 findNavController().navigate(action)
@@ -318,18 +330,46 @@ class CustomFrontPreviewFragment : Fragment() {
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
             override fun surfaceCreated(holder: SurfaceHolder) {
+                // ✅ fragmentBinding이 null이면 초기화 중단
+                val binding = _fragmentBinding ?: run {
+                    Log.w(TAG, "⚠️ surfaceCreated(): fragmentBinding이 null입니다. 초기화 중단")
+                    return
+                }
+                
                 // 프리뷰 사이즈/뷰비 설정
                 val previewSize = getPreviewOutputSize(
-                    fragmentBinding.viewFinder.display, characteristics, SurfaceHolder::class.java
+                    binding.viewFinder.display, characteristics, SurfaceHolder::class.java
                 )
                 currentPreviewSize = previewSize
 
-                fragmentBinding.viewFinder.setAspectRatio(previewSize.width, previewSize.height)
+                binding.viewFinder.setAspectRatio(previewSize.width, previewSize.height)
                 pipeline.setPreviewSize(previewSize)
 
-                fragmentBinding.viewFinder.post {
-                    pipeline.createResources(holder.surface)
-                    initializeCamera() // ★ front 카메라로만 연다
+                binding.viewFinder.post {
+                    // ✅ 이전 정리 작업이 진행 중이면 완료될 때까지 대기
+                    if (cleanupJob?.isActive == true) {
+                        Log.d(TAG, "⏳ SurfaceHolder: 이전 정리 작업 완료 대기 중...")
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            cleanupJob?.join()
+                            Log.d(TAG, "✅ SurfaceHolder: 이전 정리 작업 완료, 카메라 초기화 시작")
+                            
+                            // ✅ Surface 유효성 재확인 (정리 작업 완료 후 Surface가 유효한지 확인)
+                            if (!holder.surface.isValid) {
+                                Log.e(TAG, "❌ Surface가 유효하지 않습니다. 초기화 중단")
+                                return@launch
+                            }
+                            
+                            initPipelineWithRetry(holder.surface)
+                        }
+                    } else {
+                        // ✅ Surface 유효성 확인
+                        if (!holder.surface.isValid) {
+                            Log.e(TAG, "❌ Surface가 유효하지 않습니다. 초기화 중단")
+                            return@post
+                        }
+                        
+                        initPipelineWithRetry(holder.surface)
+                    }
                 }
 
                 // ===== Overlay container + focus ring =====
@@ -650,6 +690,10 @@ class CustomFrontPreviewFragment : Fragment() {
 
         // UI 업데이트
         fragmentBinding.captureButton.post {
+            // 🔽 네비게이션 바가 펼쳐진 상태면 접기
+            requireView().let { rootView ->
+                com.echoshot.app.utils.NavigationBarUtils.collapseNavigationBar(rootView)
+            }
             fragmentBinding.captureButton.background =
                 ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_pressed)
             fragmentBinding.captureTimer?.apply {
@@ -683,7 +727,7 @@ class CustomFrontPreviewFragment : Fragment() {
 
         // ✅ UI에서 중복 클릭 방지
         withContext(Dispatchers.Main) {
-            fragmentBinding.captureButton.isEnabled = false
+            _fragmentBinding?.captureButton?.isEnabled = false
         }
 
         try {
@@ -691,7 +735,7 @@ class CustomFrontPreviewFragment : Fragment() {
                 isRecording.set(false)
                 isStopping.set(false)
                 withContext(Dispatchers.Main) {
-                    fragmentBinding.captureButton.isEnabled = true
+                    _fragmentBinding?.captureButton?.isEnabled = true
                 }
                 return@launch
             }
@@ -706,7 +750,7 @@ class CustomFrontPreviewFragment : Fragment() {
             pipeline.clearFrameListener()
             cvRecordingComplete.open()   // 더 이상 onClosed에 의존하지 않음
 
-            // 3) 캡처 중단 + 프리뷰 요청으로 전환 (세션은 닫지 않는다!)
+            // 3) 세션 중지 및 종료 (후면과 동일하게 세션 완전 종료)
             withContext(Dispatchers.Main) {
                 // ✅ 세션 유효성 검사 및 예외 무해화
                 runCatching {
@@ -717,50 +761,47 @@ class CustomFrontPreviewFragment : Fragment() {
                     Log.w(TAG, "⚠️ stopRepeating() 실패 (무해화): ${e.message}")
                 }
 
-                try {
-                    // 기존 세션을 그대로 사용해서 프리뷰 요청만 다시 건다
+                runCatching {
                     if (::session.isInitialized && !isSessionClosed(session)) {
-                        val previewReq = pipeline.createPreviewRequest(session, args.previewStabilization)
-                            ?: camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                                val previewTargets = pipeline.getPreviewTargets()
-                                previewTargets.forEach { addTarget(it) }
-
-                                set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                                set(
-                                    CaptureRequest.CONTROL_AF_MODE,
-                                    CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
-                                )
-                                set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
-                            }.build()
-
-                        runCatching {
-                            session.setRepeatingRequest(previewReq, null, cameraHandler)
-                        }.onFailure { e ->
-                            Log.w(TAG, "⚠️ setRepeatingRequest() 실패: ${e.message}")
-                        }
+                        session.abortCaptures()
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "전면 프리뷰 재시작 실패", e)
+                }.onFailure { e ->
+                    Log.w(TAG, "⚠️ abortCaptures() 실패 (무해화): ${e.message}")
                 }
 
-            // 4) UI 복원 (버튼/타이머/갤러리/카메라 스위치)
-            fragmentBinding.captureButton.background =
-                ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_normal)
-            // 타이머 업데이트 중지
-            stopTimerUpdate()
-            fragmentBinding.captureTimer?.visibility = View.GONE
+                // ✅ 세션 닫기 (한 번만) - 후면과 동일
+                runCatching {
+                    if (::session.isInitialized && !isSessionClosed(session)) {
+                        session.close()
+                    }
+                }.onFailure { e ->
+                    Log.w(TAG, "⚠️ session.close() 실패 (무해화): ${e.message}")
+                }
 
-            galleryButtonOriginalDrawable?.let {
-                fragmentBinding.galleryButton.setImageDrawable(it)
-            } ?: run {
-                updateGalleryThumbnail()
-            }
-            galleryButtonOriginalClickListener?.let {
-                fragmentBinding.galleryButton.setOnClickListener(it)
-            }
+            // 4) UI 복원 (버튼/타이머/갤러리/카메라 스위치) - 뷰가 유효할 때만
+            _fragmentBinding?.let { binding ->
+                binding.captureButton.background =
+                    ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_normal)
+                // 타이머 업데이트 중지
+                stopTimerUpdate()
+                binding.captureTimer?.visibility = View.GONE
 
-            fragmentBinding.switchCameraButton.visibility = View.VISIBLE
-            requireView().findViewById<View>(R.id.switch_camera_placeholder)?.visibility = View.GONE
+                galleryButtonOriginalDrawable?.let {
+                    binding.galleryButton.setImageDrawable(it)
+                } ?: run {
+                    updateGalleryThumbnail()
+                }
+                galleryButtonOriginalClickListener?.let {
+                    binding.galleryButton.setOnClickListener(it)
+                }
+
+                binding.switchCameraButton.visibility = View.VISIBLE
+                try {
+                    requireView().findViewById<View>(R.id.switch_camera_placeholder)?.visibility = View.GONE
+                } catch (e: Exception) {
+                    Log.w(TAG, "뷰 접근 실패 (무시): ${e.message}")
+                }
+            } ?: Log.w(TAG, "⚠️ fragmentBinding이 null입니다. UI 업데이트 스킵")
         }
 
         // 5) 화면 회전 잠금 해제
@@ -787,20 +828,29 @@ class CustomFrontPreviewFragment : Fragment() {
                 arrayOf(outputFile.absolutePath),
                 arrayOf(mime)
             ) { _, _ ->
-                Handler(Looper.getMainLooper()).post {
-                    if (isAdded) {
-                        updateGalleryThumbnail()
+                // ✅ lifecycleOwner 사용 (viewLifecycleOwner는 뷰가 destroy된 후 접근 불가)
+                lifecycleScope.launch(Dispatchers.Main) {
+                    if (isAdded && view != null && _fragmentBinding != null) {
+                        try {
+                            updateGalleryThumbnail()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "updateGalleryThumbnail 실패 (무시): ${e.message}")
+                        }
                     }
                 }
             }
         } else {
-            Handler(Looper.getMainLooper()).post {
-                if (isAdded) {
-                    Toast.makeText(
-                        requireContext(),
-                        R.string.recorder_shutdown_error,
-                        Toast.LENGTH_LONG
-                    ).show()
+            lifecycleScope.launch(Dispatchers.Main) {
+                if (isAdded && view != null && _fragmentBinding != null) {
+                    try {
+                        Toast.makeText(
+                            requireContext(),
+                            R.string.recorder_shutdown_error,
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Toast 표시 실패 (무시): ${e.message}")
+                    }
                 }
             }
         }
@@ -808,43 +858,52 @@ class CustomFrontPreviewFragment : Fragment() {
             // 9) 상태 플래그 정리
             recordingStarted = false
             
-            // 10) 프래그먼트 재시작 (프리뷰가 멈춘 문제 해결)
-            Handler(Looper.getMainLooper()).post {
-                if (isAdded) {
-                    // 프래그먼트를 다시 띄우기 위해 popBackStack 후 같은 프래그먼트로 다시 네비게이션
-                    findNavController().popBackStack()
-                    
-                    // 같은 프래그먼트로 다시 네비게이션하여 완전히 재시작
-                    val frontId = getFrontCameraId()
-                    if (frontId != null) {
-                        val action = CustomPreviewFragmentDirections
-                            .actionCustomPreviewToCustomFrontPreview(
-                                frontId,
-                                args.width,
-                                args.height,
-                                args.fps,
-                                args.dynamicRange,
-                                args.colorSpace,
-                                args.previewStabilization,
-                                args.useMediaRecorder,
-                                args.videoCodec,
-                                args.filterOn,
-                                args.transfer,
-                                args.useHardware,
-                                "hardware"
-                            ).apply {
-                                setForcePhysicalId(null)
+            // 10) 프래그먼트 재시작 - 사용자가 직접 정지 버튼을 눌렀을 때만 실행
+            // ✅ 백그라운드로 나갔다가 돌아온 경우 popBackStack() 호출하지 않음
+            if (!isPausedForBackground) {
+                withContext(Dispatchers.Main) {
+                    if (isAdded && _fragmentBinding != null) {
+                        try {
+                            // 프래그먼트를 다시 띄우기 위해 popBackStack 후 같은 프래그먼트로 다시 네비게이션
+                            findNavController().popBackStack()
+                            
+                            // 같은 프래그먼트로 다시 네비게이션하여 완전히 재시작
+                            val frontId = getFrontCameraId()
+                            if (frontId != null) {
+                                val action = CustomPreviewFragmentDirections
+                                    .actionCustomPreviewToCustomFrontPreview(
+                                        frontId,
+                                        args.width,
+                                        args.height,
+                                        args.fps,
+                                        args.dynamicRange,
+                                        args.colorSpace,
+                                        args.previewStabilization,
+                                        args.useMediaRecorder,
+                                        args.videoCodec,
+                                        args.filterOn,
+                                        args.transfer,
+                                        args.useHardware,
+                                        "hardware"
+                                    ).apply {
+                                        setForcePhysicalId(null)
+                                    }
+                                findNavController().navigate(action)
                             }
-                        findNavController().navigate(action)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "네비게이션 실패 (무시): ${e.message}")
+                        }
                     }
                 }
+            } else {
+                Log.d(TAG, "📌 백그라운드 정리 모드: popBackStack() 스킵")
             }
         } finally {
-            // ✅ 항상 플래그 리셋 및 UI 복구
+            // ✅ 항상 플래그 리셋 및 UI 복구 (뷰가 유효할 때만)
             isRecording.set(false)
             isStopping.set(false)
             withContext(Dispatchers.Main) {
-                fragmentBinding.captureButton.isEnabled = true
+                _fragmentBinding?.captureButton?.isEnabled = true
             }
         }
     }
@@ -855,6 +914,12 @@ class CustomFrontPreviewFragment : Fragment() {
      */
     @SuppressLint("ClickableViewAccessibility", "MissingPermission")
     private fun initializeCamera() = lifecycleScope.launch(Dispatchers.Main) {
+        // ✅ fragmentBinding이 null이면 초기화 중단 (뷰가 아직 생성되지 않음)
+        val binding = _fragmentBinding ?: run {
+            Log.w(TAG, "⚠️ initializeCamera(): fragmentBinding이 null입니다. 초기화 중단")
+            return@launch
+        }
+        
         val frontId = getFrontCameraId()
         if (frontId == null) {
             Toast.makeText(requireContext(), "전면 카메라를 찾을 수 없습니다.", Toast.LENGTH_SHORT).show()
@@ -885,8 +950,8 @@ class CustomFrontPreviewFragment : Fragment() {
             }.build()
 
         session.setRepeatingRequest(previewReq, null, cameraHandler)
-        // 프리뷰 시작 직후에 추가
-        fragmentBinding.captureButton.setOnClickListener {
+        // 프리뷰 시작 직후에 추가 (뷰가 유효할 때만)
+        binding.captureButton.setOnClickListener {
             if (!recordingStarted) {
                 startFrontRecording()
             } else {
@@ -912,32 +977,96 @@ class CustomFrontPreviewFragment : Fragment() {
         cameraId: String,
         handler: Handler? = null
     ): CameraDevice = suspendCancellableCoroutine { cont ->
-        manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
-            override fun onOpened(device: CameraDevice) {
-                cont.resume(device)
-            }
-
-            override fun onDisconnected(device: CameraDevice) {
-                Log.w(TAG, "Camera $cameraId has been disconnected")
-                // 필요하면 화면 정리
-                if (isAdded) requireActivity().finish()
-                if (cont.isActive) cont.resumeWithException(RuntimeException("Camera disconnected"))
-            }
-
-            override fun onError(device: CameraDevice, error: Int) {
-                val msg = when (error) {
-                    ERROR_CAMERA_DEVICE -> "Fatal (device)"
-                    ERROR_CAMERA_DISABLED -> "Device policy"
-                    ERROR_CAMERA_IN_USE -> "Camera in use"
-                    ERROR_CAMERA_SERVICE -> "Fatal (service)"
-                    ERROR_MAX_CAMERAS_IN_USE -> "Maximum cameras in use"
-                    else -> "Unknown"
+        try {
+            manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+                override fun onOpened(device: CameraDevice) {
+                    cont.resume(device)
                 }
-                val exc = RuntimeException("Camera $cameraId error: ($error) $msg")
-                Log.e(TAG, exc.message, exc)
-                if (cont.isActive) cont.resumeWithException(exc)
+
+                override fun onDisconnected(device: CameraDevice) {
+                    Log.w(TAG, "Camera $cameraId has been disconnected")
+                    // 필요하면 화면 정리
+                    if (isAdded) requireActivity().finish()
+                    if (cont.isActive) cont.resumeWithException(RuntimeException("Camera disconnected"))
+                }
+
+                override fun onError(device: CameraDevice, error: Int) {
+                    val msg = when (error) {
+                        ERROR_CAMERA_DEVICE -> "Fatal (device)"
+                        ERROR_CAMERA_DISABLED -> "Device policy"
+                        ERROR_CAMERA_IN_USE -> "Camera in use"
+                        ERROR_CAMERA_SERVICE -> "Fatal (service)"
+                        ERROR_MAX_CAMERAS_IN_USE -> "Maximum cameras in use"
+                        else -> "Unknown"
+                    }
+                    val exc = RuntimeException("Camera $cameraId error: ($error) $msg")
+                    Log.e(TAG, exc.message, exc)
+                    if (cont.isActive) cont.resumeWithException(exc)
+                }
+            }, handler)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "❌ 카메라 권한이 없습니다: ${e.message}", e)
+            // 메인 스레드에서 다이얼로그 표시 후 이전 화면으로
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                showCameraPermissionDialog()
             }
-        }, handler)
+            // 예외를 던지지 않고 coroutine을 중단 상태로 유지 (다이얼로그에서 처리)
+            // cont.resumeWithException() 호출하지 않음
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 카메라 열기 실패: ${e.message}", e)
+            if (cont.isActive) {
+                cont.resumeWithException(RuntimeException("카메라를 열 수 없습니다: ${e.message}", e))
+            }
+        }
+    }
+    
+    /**
+     * 카메라 권한이 없을 때 사용자에게 안내 다이얼로그 표시
+     */
+    private fun showCameraPermissionDialog() {
+        if (!isAdded || context == null) {
+            // Fragment가 detached된 경우 안전하게 처리
+            return
+        }
+        
+        try {
+            androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                .setTitle(R.string.permission_camera_required_title)
+                .setMessage(R.string.permission_camera_required_message)
+                .setPositiveButton(R.string.permission_go_to_settings) { _, _ ->
+                    // 앱 설정 화면으로 이동 후 이전 화면으로
+                    try {
+                        val intent = android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            android.net.Uri.fromParts("package", requireContext().packageName, null)
+                        )
+                        startActivity(intent)
+                        // 설정에서 돌아오면 다시 시도하도록 이전 화면으로
+                        findNavController().popBackStack()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "설정 화면 이동 실패: ${e.message}")
+                        requireActivity().finish()
+                    }
+                }
+                .setNegativeButton(R.string.permission_cancel) { _, _ ->
+                    // 이전 화면으로 돌아가기
+                    try {
+                        findNavController().popBackStack()
+                    } catch (e: Exception) {
+                        requireActivity().finish()
+                    }
+                }
+                .setCancelable(false)
+                .show()
+        } catch (e: Exception) {
+            Log.e(TAG, "권한 다이얼로그 표시 실패: ${e.message}")
+            // 다이얼로그 표시 실패 시 이전 화면으로
+            try {
+                findNavController().popBackStack()
+            } catch (e2: Exception) {
+                requireActivity().finish()
+            }
+        }
     }
 
     /** 세션 생성 (동일) */
@@ -1017,7 +1146,11 @@ class CustomFrontPreviewFragment : Fragment() {
         val r = aeCompRange ?: return
         currentAeComp = target.coerceIn(r.lower, r.upper)
         
-        // ✅ 세션 상태 확인 후 안전하게 호출
+        // ✅ 카메라/세션 상태 확인 후 안전하게 호출
+        if (!::camera.isInitialized) {
+            Log.w(TAG, "⚠️ applyExposureComp: camera가 아직 초기화되지 않음")
+            return
+        }
         if (!::session.isInitialized || isSessionClosed(session)) {
             Log.w(TAG, "⚠️ applyExposureComp: 세션이 닫혔거나 초기화되지 않음")
             return
@@ -1056,6 +1189,15 @@ class CustomFrontPreviewFragment : Fragment() {
         handler: Handler,
         recordingCompleteOnClose: Boolean
     ): CameraCaptureSession = suspendCoroutine { cont ->
+        // ✅ Surface 유효성 사전 검사
+        val invalidSurfaces = targets.filter { !it.isValid }
+        if (invalidSurfaces.isNotEmpty()) {
+            val errorMsg = "❌ 일부 Surface가 유효하지 않습니다 (abandoned/invalid). 세션 생성을 중단합니다."
+            Log.e(TAG, errorMsg)
+            cont.resumeWithException(RuntimeException(errorMsg))
+            return@suspendCoroutine
+        }
+        
         val stateCallback = object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(session: CameraCaptureSession) = cont.resume(session)
             override fun onConfigureFailed(session: CameraCaptureSession) {
@@ -1077,7 +1219,72 @@ class CustomFrontPreviewFragment : Fragment() {
                 cvRecordingComplete.open()
             }
         }
-        setupSessionWithDynamicRangeProfile(device, targets, handler, stateCallback)
+        
+        // ✅ Surface가 유효한 경우에만 세션 생성 시도
+        try {
+            setupSessionWithDynamicRangeProfile(device, targets, handler, stateCallback)
+        } catch (e: IllegalArgumentException) {
+            // ✅ Surface abandoned 예외 처리
+            Log.e(TAG, "❌ Surface abandoned catch in createCaptureSession: ${e.message}", e)
+            cont.resumeWithException(RuntimeException("Surface is already abandoned/invalid: ${e.message}", e))
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 예상치 못한 예외 in createCaptureSession: ${e.message}", e)
+            cont.resumeWithException(e)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // ✅ 촬영 중이면 자동으로 녹화 중지 및 저장
+        if (isCurrentlyRecording()) {
+            Log.d(TAG, "🛑 onPause() 감지: 녹화 중 자동 중지 시작")
+            isPausedForBackground = true  // ✅ 백그라운드 플래그 설정
+            cleanupJob = lifecycleScope.launch(Dispatchers.IO) {
+                stopFrontRecording()
+            }
+        }
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        // ✅ 백그라운드에서 돌아왔고 정리 작업이 있었다면 프래그먼트 재시작
+        if (isPausedForBackground) {
+            Log.d(TAG, "⏳ onResume(): 백그라운드 정리 후 재진입 감지, 프래그먼트 재시작 필요")
+            lifecycleScope.launch(Dispatchers.Main) {
+                // 정리 작업 완료 대기
+                cleanupJob?.join()
+                Log.d(TAG, "✅ onResume(): 정리 작업 완료, 프래그먼트 재시작")
+                cleanupJob = null
+                isPausedForBackground = false
+                
+                // 🔄 프래그먼트를 완전히 재시작하여 새 인코더/Surface 생성
+                if (isAdded) {
+                    try {
+                        val action = CustomFrontPreviewFragmentDirections
+                            .actionSelfReloadFront(
+                                args.cameraId,
+                                args.width,
+                                args.height,
+                                args.fps,
+                                args.dynamicRange,
+                                args.colorSpace,
+                                args.previewStabilization,
+                                args.useMediaRecorder,
+                                args.videoCodec,
+                                args.filterOn,
+                                args.transfer,
+                                args.useHardware,
+                                args.pipelineMode
+                            ).apply {
+                                setForcePhysicalId(args.forcePhysicalId)
+                            }
+                        findNavController().navigate(action)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "프래그먼트 재시작 실패: ${e.message}", e)
+                    }
+                }
+            }
+        }
     }
 
     override fun onStop() {
@@ -1087,10 +1294,25 @@ class CustomFrontPreviewFragment : Fragment() {
 
     override fun onDestroy() {
         super.onDestroy()
-        pipeline.clearFrameListener()
-        pipeline.cleanup()
+        
+        // ✅ pipeline이 초기화된 경우에만 정리 (lazy 초기화 트리거 방지)
+        if (_pipelineLazy.isInitialized()) {
+            pipeline.clearFrameListener()
+            pipeline.cleanup()
+        }
         cameraThread.quitSafely()
-        encoderSurface.release()
+        
+        // ✅ Surface release 시 안전하게 처리 (by lazy는 isInitialized 사용 불가)
+        try {
+            if (encoderSurface.isValid) {
+                encoderSurface.release()
+                Log.d(TAG, "✅ encoderSurface release 완료")
+            } else {
+                Log.d(TAG, "⚠️ encoderSurface가 이미 해제되었거나 유효하지 않음")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ encoderSurface release 중 예외 (무시)", e)
+        }
     }
 
     override fun onDestroyView() {
@@ -1108,6 +1330,11 @@ class CustomFrontPreviewFragment : Fragment() {
     }
 
     private fun updateGalleryThumbnail() {
+        val binding = _fragmentBinding ?: run {
+            Log.w(TAG, "⚠️ updateGalleryThumbnail: fragmentBinding이 null입니다")
+            return
+        }
+        
         val dir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
             "EchoShot"
@@ -1115,14 +1342,18 @@ class CustomFrontPreviewFragment : Fragment() {
         val videoFiles = dir.listFiles { f -> f.extension.equals("mp4", true) }
             ?.sortedByDescending { it.lastModified() }
             ?: run {
-                fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
-                fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
+                _fragmentBinding?.galleryButton?.let { btn ->
+                    btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                    btn.setImageResource(R.drawable.ic_photo_gallery)
+                }
                 return
             }
 
         val latest = videoFiles.firstOrNull() ?: run {
-            fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
-            fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
+            _fragmentBinding?.galleryButton?.let { btn ->
+                btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                btn.setImageResource(R.drawable.ic_photo_gallery)
+            }
             return
         }
 
@@ -1147,12 +1378,14 @@ class CustomFrontPreviewFragment : Fragment() {
             null
         }
 
-        if (thumb == null) {
-            fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
-            fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
-        } else {
-            fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_CROP
-            fragmentBinding.galleryButton.setImageBitmap(thumb)
+        _fragmentBinding?.galleryButton?.let { btn ->
+            if (thumb == null) {
+                btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                btn.setImageResource(R.drawable.ic_photo_gallery)
+            } else {
+                btn.scaleType = ImageView.ScaleType.CENTER_CROP
+                btn.setImageBitmap(thumb)
+            }
         }
     }
     
@@ -1169,12 +1402,15 @@ class CustomFrontPreviewFragment : Fragment() {
 
                 lifecycleScope.launch(Dispatchers.IO) {
                     try {
+                        // ✅ PhotoFragment와 동일한 파일명 형식 사용
                         val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.KOREA)
                             .format(System.currentTimeMillis())
+                        
+                        // ✅ PhotoFragment와 동일한 방식: MediaStore에 직접 저장
                         val contentValues = ContentValues().apply {
                             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
                             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                            put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/EchoShot")
+                            put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/EchoShot")  // PhotoFragment와 동일 (슬래시 없음)
                         }
 
                         val uri = requireContext().contentResolver.insert(
@@ -1187,17 +1423,12 @@ class CustomFrontPreviewFragment : Fragment() {
                                 val ok = bmp.compress(Bitmap.CompressFormat.JPEG, 95, os)
                                 if (!ok) throw RuntimeException("JPEG 압축 실패")
                             }
-                            MediaScannerConnection.scanFile(
-                                requireContext(),
-                                arrayOf(it.toString()),
-                                arrayOf("image/jpeg"),
-                                null
-                            )
-                        }
-
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), getString(R.string.photo_saved), Toast.LENGTH_SHORT).show()
-                        }
+                            Log.d(TAG, "✅ 사진 저장 완료: $name")
+                            
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), getString(R.string.photo_saved), Toast.LENGTH_SHORT).show()
+                            }
+                        } ?: throw RuntimeException("MediaStore insert 실패")
                     } catch (e: Exception) {
                         Log.e(TAG, "사진 저장 실패", e)
                         withContext(Dispatchers.Main) {
@@ -1210,6 +1441,40 @@ class CustomFrontPreviewFragment : Fragment() {
             Log.e(TAG, "사진 촬영 오류", e)
             Toast.makeText(requireContext(), "${getString(R.string.photo_capture_failed)}: ${e.message}", Toast.LENGTH_SHORT).show()
         }
+    }
+    
+    /**
+     * 파이프라인 초기화 - 최대 3회 재시도 후 실패하면 크래시
+     * Surface 타이밍 이슈 대응 (저사양 기기에서 Surface 준비가 늦을 수 있음)
+     */
+    private fun initPipelineWithRetry(surface: Surface) {
+        val maxRetries = 3
+        var lastException: Exception? = null
+        
+        for (attempt in 1..maxRetries) {
+            try {
+                pipeline.createResources(surface)
+                initializeCamera()
+                Log.d(TAG, "✅ pipeline.createResources() 성공 (시도 $attempt/$maxRetries)")
+                return  // 성공 시 즉시 리턴
+            } catch (e: Exception) {
+                lastException = e
+                Log.w(TAG, "⚠️ pipeline.createResources() 실패 (시도 $attempt/$maxRetries): ${e.message}")
+                
+                if (attempt < maxRetries) {
+                    // Surface가 아직 준비 안됐을 수 있으므로 잠시 대기 후 재시도
+                    try {
+                        Thread.sleep(100L * attempt)  // 100ms, 200ms, 300ms 점진적 대기
+                    } catch (_: InterruptedException) {
+                        break
+                    }
+                }
+            }
+        }
+        
+        // 모든 재시도 실패 → 크래시 (Play Console에 찍힘)
+        Log.e(TAG, "❌ pipeline.createResources() 최종 실패 ($maxRetries 회 시도) - 크래시 발생")
+        throw lastException ?: RuntimeException("Pipeline 초기화 실패")
     }
     
     companion object {

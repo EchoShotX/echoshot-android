@@ -33,7 +33,8 @@ object VideoPipeline {
         sessionUuid: String,
         srcVideoUri: Uri,
         fps: Int,
-        paddingFactor: Float
+        paddingFactor: Float,
+        outputResolution: OutputResolution = OutputResolution.FHD
     ): Uri? {
         val jsonFile = File(context.filesDir, "${sessionUuid}_processed.json")
         if (!jsonFile.exists()) {
@@ -48,7 +49,8 @@ object VideoPipeline {
             fps = fps,
             paddingFactor = paddingFactor,
             logFile = jsonFile,
-            format = LogFormat.PROCESSED_JSON
+            format = LogFormat.PROCESSED_JSON,
+            outputResolution = outputResolution
         )
     }
 
@@ -60,7 +62,8 @@ object VideoPipeline {
         fps: Int,
         paddingFactor: Float,
         logFile: File,
-        format: LogFormat
+        format: LogFormat,
+        outputResolution: OutputResolution = OutputResolution.FHD
     ): Uri? {
         // 0) 촬영 시각
         val origTakenMs = queryDateTakenMs(context, srcVideoUri)
@@ -110,6 +113,7 @@ object VideoPipeline {
                 paddingFactor = paddingFactor,
                 logPath = logFile.absolutePath,
                 logFormat = format,
+                outputResolution = outputResolution,  // ✅ 출력 해상도 전달
                 debugJsonPath = debugFile.absolutePath    // ✅ 내부에 먼저 기록
             ).cropAll()
         } catch (e: Exception) {

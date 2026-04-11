@@ -50,7 +50,12 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
 import android.annotation.SuppressLint
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import com.echoshot.app.mp4detact.GlCtx
+import com.echoshot.app.utils.DeploymentModeManager
+import com.echoshot.app.utils.FancamHistoryManager
 import com.echoshot.app.utils.setupBottomNavigationBar
 
 
@@ -90,6 +95,9 @@ class GalleryFragment : Fragment() {
     // 삭제 권한 요청 관련
     private var pendingDeleteUris: List<Uri> = emptyList()
     private lateinit var deletePermissionLauncher: androidx.activity.result.ActivityResultLauncher<IntentSenderRequest>
+    
+    // 저장공간 권한 요청 관련
+    private lateinit var storagePermissionLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>
 
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?,
@@ -103,6 +111,25 @@ class GalleryFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         glCtx = GlCtx()
+        
+        // 저장공간 권한 요청 Launcher 초기화
+        storagePermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
+            val allGranted = permissions.values.all { it }
+            if (allGranted) {
+                // 권한이 승인되었으면 갤러리 새로고침 (초기 모드 유지)
+                val startBasic = args.startBasic
+                reloadForMode(startBasic)
+            } else {
+                // 권한이 거부되었으면 안내 메시지 표시
+                Toast.makeText(
+                    requireContext(),
+                    "저장공간 권한이 필요합니다. 갤러리 기능이 제한될 수 있습니다.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
         
         // 삭제 권한 요청 Launcher 초기화
         deletePermissionLauncher = registerForActivityResult(
@@ -121,6 +148,9 @@ class GalleryFragment : Fragment() {
                 exitSelectionMode()
             }
         }
+        
+        // 갤러리 진입 시 저장공간 권한 확인 및 요청
+        checkAndRequestStoragePermission()
 
         binding.backIcon.setOnClickListener { 
             // ✅ 방법 1: 명시적으로 CustomPreviewFragment로 네비게이션하여 모든 파라미터 전달
@@ -154,15 +184,31 @@ class GalleryFragment : Fragment() {
                 val action = GalleryFragmentDirections.actionGalleryFragmentToHomeFragment()
                 findNavController().navigate(action)
             },
+            onArchiveClick = {
+                // 배포모드일 때는 업로드 페이지로 이동하지 않음
+                if (DeploymentModeManager.isDeploymentMode()) {
+                    return@setupBottomNavigationBar
+                }
+                // 갤러리에서 업로드 페이지로 이동
+                val action = GalleryFragmentDirections.actionGalleryFragmentToFancamEditFragment()
+                findNavController().navigate(action)
+            },
             onProfileClick = {
+                // 배포모드일 때는 프로필로 이동하지 않음
+                if (DeploymentModeManager.isDeploymentMode()) {
+                    return@setupBottomNavigationBar
+                }
                 // 갤러리에서 프로필로 이동
                 val action = GalleryFragmentDirections.actionGalleryFragmentToProfileFragment()
                 findNavController().navigate(action)
             },
             onCameraClick = {
-                // 갤러리에서 카메라로 이동 (CustomPreviewFragment)
+                // 갤러리에서 카메라로 이동 (항상 후면 카메라로 이동)
+                val cameraManager = requireContext().getSystemService(Context.CAMERA_SERVICE) as CameraManager
+                val backCameraId = getBackCameraId(cameraManager) ?: args.cameraId
+                
                 val action = GalleryFragmentDirections.actionGalleryFragmentToCustomPreviewFragment(
-                    args.cameraId,
+                    backCameraId,
                     args.width,
                     args.height,
                     args.fps,
@@ -176,7 +222,8 @@ class GalleryFragment : Fragment() {
                     args.useHardware,
                     args.pipelineMode
                 ).apply {
-                    args.forcePhysicalId?.let { setForcePhysicalId(it) }
+                    // 후면 카메라로 이동할 때는 forcePhysicalId를 null로 설정 (논리 카메라 사용)
+                    setForcePhysicalId(null)
                 }
                 findNavController().navigate(action)
             }
@@ -199,7 +246,7 @@ class GalleryFragment : Fragment() {
         val startBasic = args.startBasic
         mode = if (startBasic) GalleryMode.BASIC else GalleryMode.EXTENDED
         setActiveTab(isBasic = startBasic)   // 버튼 색/테두리 갱신
-        reloadForMode(startBasic)            // 리스트 로딩
+        // 리스트 로딩은 checkAndRequestStoragePermission에서 권한 확인 후 수행
 
         // 2) 그리드 레이아웃 (헤더 span은 확장 모드일 때만 3칸)
         val glm = GridLayoutManager(requireContext(), 3)
@@ -311,6 +358,43 @@ class GalleryFragment : Fragment() {
             } else {
                 ""
             }
+        }
+    }
+    
+    /**
+     * 저장공간 권한 확인 및 요청 (갤러리 진입 시)
+     */
+    private fun checkAndRequestStoragePermission() {
+        val permissions = mutableListOf<String>()
+        
+        when {
+            // Android 13+ (API 33+)
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
+                permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
+                permissions.add(Manifest.permission.READ_MEDIA_IMAGES)
+            }
+            // Android 10-12 (API 29-32)
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
+                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            // Android 9 이하
+            else -> {
+                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+        }
+        
+        // 권한이 이미 있으면 바로 로드
+        val needsPermission = permissions.any { permission ->
+            ContextCompat.checkSelfPermission(requireContext(), permission) != PackageManager.PERMISSION_GRANTED
+        }
+        
+        if (needsPermission) {
+            // 권한 요청
+            storagePermissionLauncher.launch(permissions.toTypedArray())
+        } else {
+            // 권한이 이미 있으면 바로 로드 (초기 모드 유지)
+            val startBasic = args.startBasic
+            reloadForMode(startBasic)
         }
     }
     
@@ -558,15 +642,33 @@ class GalleryFragment : Fragment() {
     private fun loadBasicItems(): List<ListItem> {
         val result = mutableListOf<Pair<ListItem, Long>>() // 날짜순 정렬을 위해 Pair 사용
         
-        // 동영상 쿼리
-        val videoProj = arrayOf(
+        // Android 10+에서는 RELATIVE_PATH 사용, Q 미만에서는 DATA LIKE 사용
+        val isAndroidQPlus = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+        
+        // 동영상 쿼리 projection (Q 미만에서는 DATA 컬럼 추가)
+        val videoProj = mutableListOf(
             MediaStore.Video.Media._ID,
             MediaStore.Video.Media.DATE_TAKEN,
-            MediaStore.Video.Media.DURATION,
-            MediaStore.Video.Media.DATA
-        )
-        val videoSel = "${MediaStore.Video.Media.DATA} LIKE ?"
-        val videoSelArgs = arrayOf("%/DCIM/EchoShot/%")
+            MediaStore.Video.Media.DURATION
+        ).apply {
+            if (!isAndroidQPlus) {
+                add(MediaStore.Video.Media.DATA)
+            }
+        }.toTypedArray()
+        
+        val (videoSel, videoSelArgs) = if (isAndroidQPlus) {
+            // Android 10+: RELATIVE_PATH 사용 (슬래시 유무와 관계없이 매칭)
+            Pair(
+                "${MediaStore.Video.Media.RELATIVE_PATH} LIKE ?",
+                arrayOf("DCIM/EchoShot%")
+            )
+        } else {
+            // Android 9 이하: DATA LIKE 사용
+            Pair(
+                "${MediaStore.Video.Media.DATA} LIKE ?",
+                arrayOf("%/DCIM/EchoShot/%")
+            )
+        }
         val videoSort = "${MediaStore.Video.Media.DATE_TAKEN} DESC"
 
         requireContext().contentResolver.query(
@@ -586,14 +688,29 @@ class GalleryFragment : Fragment() {
             }
         }
         
-        // 사진 쿼리 (DCIM/EchoShot 경로 포함)
-        val imageProj = arrayOf(
+        // 사진 쿼리 projection (Q 미만에서는 DATA 컬럼 추가)
+        val imageProj = mutableListOf(
             MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.DATE_TAKEN,
-            MediaStore.Images.Media.DATA
-        )
-        val imageSel = "${MediaStore.Images.Media.DATA} LIKE ?"
-        val imageSelArgs = arrayOf("%/DCIM/EchoShot/%")
+            MediaStore.Images.Media.DATE_TAKEN
+        ).apply {
+            if (!isAndroidQPlus) {
+                add(MediaStore.Images.Media.DATA)
+            }
+        }.toTypedArray()
+        
+        val (imageSel, imageSelArgs) = if (isAndroidQPlus) {
+            // Android 10+: RELATIVE_PATH 사용 (슬래시 유무와 관계없이 매칭)
+            Pair(
+                "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?",
+                arrayOf("DCIM/EchoShot%")
+            )
+        } else {
+            // Android 9 이하: DATA LIKE 사용
+            Pair(
+                "${MediaStore.Images.Media.DATA} LIKE ?",
+                arrayOf("%/DCIM/EchoShot/%")
+            )
+        }
         val imageSort = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
 
         requireContext().contentResolver.query(
@@ -636,17 +753,36 @@ class GalleryFragment : Fragment() {
         )
 
         val items = mutableListOf<MediaItem>()
-        val proj = arrayOf(
+        
+        // Android 10+에서는 RELATIVE_PATH 사용, Q 미만에서는 DATA LIKE 사용
+        val isAndroidQPlus = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+        
+        // projection (Q 미만에서는 DATA 컬럼 추가)
+        val proj = mutableListOf(
             MediaStore.Video.Media._ID,
             MediaStore.Video.Media.DISPLAY_NAME,
             MediaStore.Video.Media.DATE_TAKEN,
             MediaStore.Video.Media.DURATION
-        )
-
-        // 기존: val sel = "${MediaStore.Video.Media.DATA} LIKE ?"
-        // ↓ 전면(파일명 시작이 VID_front_)을 제외
-        val sel = "${MediaStore.Video.Media.DATA} LIKE ? AND ${MediaStore.Video.Media.DISPLAY_NAME} NOT LIKE ?"
-        val selArgs = arrayOf("%/DCIM/EchoShot/%", "VID_front_%")
+        ).apply {
+            if (!isAndroidQPlus) {
+                add(MediaStore.Video.Media.DATA)
+            }
+        }.toTypedArray()
+        
+        // 전면(파일명 시작이 VID_front_)을 제외하고 EchoShot 폴더만 쿼리
+        val (sel, selArgs) = if (isAndroidQPlus) {
+            // Android 10+: RELATIVE_PATH 사용 (슬래시 유무와 관계없이 매칭)
+            Pair(
+                "${MediaStore.Video.Media.RELATIVE_PATH} LIKE ? AND ${MediaStore.Video.Media.DISPLAY_NAME} NOT LIKE ?",
+                arrayOf("DCIM/EchoShot%", "VID_front_%")
+            )
+        } else {
+            // Android 9 이하: DATA LIKE 사용
+            Pair(
+                "${MediaStore.Video.Media.DATA} LIKE ? AND ${MediaStore.Video.Media.DISPLAY_NAME} NOT LIKE ?",
+                arrayOf("%/DCIM/EchoShot/%", "VID_front_%")
+            )
+        }
 
         val sort = "${MediaStore.Video.Media.DATE_TAKEN} DESC"
 
@@ -1187,6 +1323,21 @@ class GalleryFragment : Fragment() {
                 args.forcePhysicalId?.let { setForcePhysicalId(it) }
             }
             findNavController().navigate(action)
+        }
+    }
+    
+    /**
+     * 후면 카메라 ID를 찾는 헬퍼 함수
+     */
+    private fun getBackCameraId(cameraManager: CameraManager): String? {
+        return cameraManager.cameraIdList.firstOrNull { id ->
+            try {
+                val characteristics = cameraManager.getCameraCharacteristics(id)
+                val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
+                lensFacing == CameraCharacteristics.LENS_FACING_BACK
+            } catch (e: Exception) {
+                false
+            }
         }
     }
 }

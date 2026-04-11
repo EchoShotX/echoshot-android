@@ -1,0 +1,18 @@
+﻿diff --git a/app/src/main/java/com/echoshot/app/CustomHardwarePipeline.kt b/app/src/main/java/com/echoshot/app/CustomHardwarePipeline.kt
+index f86e5a5..2815166 100644
+--- a/app/src/main/java/com/echoshot/app/CustomHardwarePipeline.kt
++++ b/app/src/main/java/com/echoshot/app/CustomHardwarePipeline.kt
+@@ -1414,7 +1414,12 @@ class CustomHardwarePipeline (width: Int, height: Int, fps: Int, filterOn: Boole
+ 
+         private fun clearFrameListener() {
+             Log.d("RenderHandler", "?㏈ clearFrameListener() ?몄텧??)
+-            cameraTexture.setOnFrameAvailableListener(null)
++            // ??lateinit 蹂??珥덇린???щ? 泥댄겕
++            if (::cameraTexture.isInitialized) {
++                cameraTexture.setOnFrameAvailableListener(null)
++            } else {
++                Log.w("RenderHandler", "?좑툘 cameraTexture媛 珥덇린?붾릺吏 ?딆쓬 - clearFrameListener ?ㅽ궢")
++            }
+             cvClearFrameListener.open()
+             Log.d("RenderHandler", "??cvClearFrameListener.open() ?몄텧??)
+         }

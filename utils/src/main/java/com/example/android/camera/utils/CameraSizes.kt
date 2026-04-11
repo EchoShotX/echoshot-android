@@ -70,9 +70,10 @@ fun <T>getPreviewOutputSize(
         config.getOutputSizes(targetClass) else config.getOutputSizes(format)
 
     // Get available sizes and sort them by area from largest to smallest
+    // Note: compareByDescending 사용하여 reversed() 호출 제거 (Java 21 호환성 문제 해결)
     val validSizes = allSizes
-            .sortedWith(compareBy { it.height * it.width })
-            .map { SmartSize(it.width, it.height) }.reversed()
+            .sortedWith(compareByDescending { it.height * it.width })
+            .map { SmartSize(it.width, it.height) }
 
     // Then, get the largest output size that is smaller or equal than our max size
     return validSizes.first { it.long <= maxSize.long && it.short <= maxSize.short }.size

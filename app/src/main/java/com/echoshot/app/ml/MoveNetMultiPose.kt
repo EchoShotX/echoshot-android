@@ -72,34 +72,43 @@ class MoveNetMultiPose(
             context: Context,
             device: Device,
             type: Type,
-        ): MoveNetMultiPose {
-            val options = Interpreter.Options()
-            var gpuDelegate: GpuDelegate? = null
-            when (device) {
-                Device.CPU -> {
-                    options.setNumThreads(CPU_NUM_THREADS)
-                }
-                Device.GPU -> {
-                    // only fixed model support Gpu delegate option.
-                    if (type == Type.Fixed) {
-                        gpuDelegate = GpuDelegate()
-                        options.addDelegate(gpuDelegate)
+        ): MoveNetMultiPose? {
+            return try {
+                val options = Interpreter.Options()
+                var gpuDelegate: GpuDelegate? = null
+                when (device) {
+                    Device.CPU -> {
+                        options.setNumThreads(CPU_NUM_THREADS)
+                    }
+                    Device.GPU -> {
+                        // only fixed model support Gpu delegate option.
+                        if (type == Type.Fixed) {
+                            gpuDelegate = GpuDelegate()
+                            options.addDelegate(gpuDelegate)
+                        }
+                    }
+                    else -> {
+                        // nothing to do
                     }
                 }
-                else -> {
-                    // nothing to do
-                }
+                MoveNetMultiPose(
+                    Interpreter(
+                        FileUtil.loadMappedFile(
+                            context,
+                            if (type == Type.Dynamic)
+                                "movenet_multipose_fp16.tflite" else ""
+                            //@TODO: (khanhlvg) Add support for fixed shape model if it's released.
+                        ), options
+                    ), type, gpuDelegate
+                )
+            } catch (e: UnsatisfiedLinkError) {
+                // TensorFlow Lite 네이티브 라이브러리 로드 실패 (저사양 기기)
+                android.util.Log.e("MoveNetMultiPose", "❌ TFLite 라이브러리 로드 실패: ${e.message}")
+                null
+            } catch (e: Exception) {
+                android.util.Log.e("MoveNetMultiPose", "❌ MoveNet 초기화 실패: ${e.message}")
+                null
             }
-            return MoveNetMultiPose(
-                Interpreter(
-                    FileUtil.loadMappedFile(
-                        context,
-                        if (type == Type.Dynamic)
-                            "movenet_multipose_fp16.tflite" else ""
-                        //@TODO: (khanhlvg) Add support for fixed shape model if it's released.
-                    ), options
-                ), type, gpuDelegate
-            )
         }
     }
 

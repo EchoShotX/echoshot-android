@@ -41,11 +41,11 @@
         android:id="@+id/shoot_box"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="100dp"
+        android:layout_marginTop="70dp"
         android:layout_marginHorizontal="24dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="#1A000000"
+        android:background="@drawable/bg_home_box"
         android:padding="20dp"
         android:clickable="true"
         android:focusable="true">
@@ -81,7 +81,6 @@
     </LinearLayout>
 
 
-
     <!-- 빠른 사용 가이드 박스 -->
     <LinearLayout
         android:id="@+id/guide_box"
@@ -91,7 +90,7 @@
         android:layout_marginHorizontal="24dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="#1A000000"
+        android:background="@drawable/bg_home_box"
         android:padding="20dp"
         android:clickable="true"
         android:focusable="true">
@@ -124,6 +123,35 @@
             app:tint="#000000"
             android:rotation="180"
             android:scaleType="fitCenter" />
+    </LinearLayout>
+
+    <!-- 앱 시작 시 카메라 자동 실행 설정 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:layout_marginHorizontal="24dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="5dp">
+
+        <TextView
+            android:id="@+id/auto_start_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/auto_start_camera"
+            android:textColor="#000000"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <Switch
+            android:id="@+id/auto_start_switch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:scaleX="1.2"
+            android:scaleY="1.2"
+            android:thumbTint="@android:color/white" />
     </LinearLayout>
 
     <!-- 가이드 내용 (나중에 추가 가능) -->

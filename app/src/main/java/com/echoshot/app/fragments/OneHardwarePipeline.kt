@@ -1268,7 +1268,12 @@ class OneHardwarePipeline (width: Int, height: Int, fps: Int, filterOn: Boolean,
         }
 
         private fun clearFrameListener() {
-            cameraTexture.setOnFrameAvailableListener(null)
+            // ✅ lateinit 변수 초기화 여부 체크
+            if (::cameraTexture.isInitialized) {
+                cameraTexture.setOnFrameAvailableListener(null)
+            } else {
+                Log.w("RenderHandler", "⚠️ cameraTexture가 초기화되지 않음 - clearFrameListener 스킵")
+            }
             cvClearFrameListener.open()
         }
 

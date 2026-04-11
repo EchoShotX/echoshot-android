@@ -1,0 +1,109 @@
+﻿diff --git a/app/src/main/java/com/echoshot/app/CustomHardwarePipelineDefault.kt b/app/src/main/java/com/echoshot/app/CustomHardwarePipelineDefault.kt
+index da1785e..45598e9 100644
+--- a/app/src/main/java/com/echoshot/app/CustomHardwarePipelineDefault.kt
++++ b/app/src/main/java/com/echoshot/app/CustomHardwarePipelineDefault.kt
+@@ -466,6 +466,10 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
+         @Volatile
+         private var zoomLevel: Float = 1.0f
+ 
++        // ??臾쇰━ ?뚯쫰蹂??쇱꽌 鍮꾩쑉 ?뺣낫 (鍮꾩쑉 蹂댁젙??
++        private var sensorWidth: Int = 0
++        private var sensorHeight: Int = 0
++
+         /** OpenGL texture for the SurfaceTexture provided to the camera */
+         private var cameraTexId: Int = 0
+ 
+@@ -605,23 +609,18 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
+         // ???쇱꽌?먯꽌 16:9濡??쇳꽣-?щ∼ 媛뺤젣 ?곸슜
+         private fun apply16x9Crop(builder: CaptureRequest.Builder, forcePhysicalId: String?) {
+             val targetAR = 16f / 9f
+-            if (forcePhysicalId.isNullOrEmpty()) {
+-                val active = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+-                val cropRect = cropActiveToAspect(active, targetAR)
+-                builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+-            } else {
+-                try {
+-                    val cameraManager = viewFinder.context.getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+-                    val physChars = cameraManager.getCameraCharacteristics(forcePhysicalId)
+-                    val active = physChars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+-                    val cropRect = cropActiveToAspect(active, targetAR)
+-                    // ?몄뀡 ?앹꽦 ??setPhysicalCameraId濡??쇱슦?낇뻽?쇰?濡??쇰컲 set ?ъ슜
+-                    // ?쇰━ 移대찓?쇰? ?ъ슜???뚮뒗 setPhysicalCameraKey媛 ?몄뀡???깅줉?섏? ?딆쓣 ???덉쓬
+-                    builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+-                } catch (e: Exception) {
+-                    android.util.Log.w("CameraAspectRatio", "Failed to apply 16:9 crop: ${e.message}")
+-                }
+-            }
++            val cameraManager = viewFinder.context.getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
++            
++            // ???꾩옱 ?ъ슜 以묒씤 臾쇰━ ?뚯쫰???뱀꽦??吏곸젒 荑쇰━
++            val charsToUse = if (forcePhysicalId.isNullOrEmpty()) characteristics else cameraManager.getCameraCharacteristics(forcePhysicalId)
++            val active = charsToUse.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
++            
++            // ??鍮꾩쑉 怨꾩궛???꾪븳 ?섎뱶?⑥뼱 ?댁긽?????+            sensorWidth = active.width()
++            sensorHeight = active.height()
++
++            val cropRect = cropActiveToAspect(active, targetAR)
++            builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+         }
+ 
+         // ???쇱꽌 Active Array瑜?16:9濡??쇳꽣-?щ∼
+@@ -1157,9 +1156,29 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
+ 
+             texture.getTransformMatrix(texMatrix)
+ 
+-            // ======== ?뵿 以?濡쒖쭅 ?쒖옉 ========
++            // ======== ?뵿 留앹썝 ?뚯쫰 蹂댁젙 + 以?濡쒖쭅 ?쒖옉 ========
+             val zoomLevel = zoomLevel.coerceIn(1.0f, 10.0f)
+-            val scaleFactor = 1 / zoomLevel
++            val zoomScale = 1.0f / zoomLevel
++
++            // ??1. 留앹썝 ?뚯쫰 ?щ? ?먮퀎 (Physical ID 議댁옱 ??留앹썝)
++            val isTeleLens = !physicalCameraId.isNullOrEmpty()
++            
++            // ??2. ?ㅼ륫 湲곕컲 ?섎뱶?⑥뼱 蹂댁젙移?(媛濡??ㅽ듃?덉튂 ?곸뇙??
++            // 留앹썝 ?뚯쫰???뚮쭔 ?몃줈瑜?異뺤냼?섏뿬 ?뺤궗媛곹삎 ?좎?
++            val hardwareOffset = if (isTeleLens) (1.0f / 1.137f) else 1.0f
++            
++            // ??3. ?대줎??鍮꾩쑉 蹂댁젙 (?쇱꽌??臾쇰━ AR -> ?쒖? 16:9)
++            val physicalAR = if (sensorWidth > 0 && sensorHeight > 0) {
++                sensorWidth.toFloat() / sensorHeight.toFloat()
++            } else {
++                16f / 9f
++            }
++            val theoryCorrection = (16f / 9f) / physicalAR
++
++            // ??4. 理쒖쥌 ?ㅼ???寃곗젙
++            val finalScaleX = zoomScale
++            val finalScaleY = zoomScale * theoryCorrection * hardwareOffset
++            
+             val translateToCenter = floatArrayOf(
+                 1f, 0f, 0f, 0f,
+                 0f, 1f, 0f, 0f,
+@@ -1168,8 +1187,8 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
+             )
+ 
+             val scaleMatrix = floatArrayOf(
+-                scaleFactor, 0f, 0f, 0f,
+-                0f, scaleFactor, 0f, 0f,
++                finalScaleX, 0f, 0f, 0f,
++                0f, finalScaleY, 0f, 0f,
+                 0f, 0f, 1f, 0f,
+                 0f, 0f, 0f, 1f
+             )
+@@ -1190,7 +1209,7 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
+             android.opengl.Matrix.multiplyMM(finalMatrix, 0, texMatrix, 0, zoomMatrix, 0)
+ 
+             System.arraycopy(finalMatrix, 0, texMatrix, 0, 16)
+-            // ======== ?뵾 以?濡쒖쭅 ??========
++            // ======== ?뵾 留앹썝 ?뚯쫰 蹂댁젙 + 以?濡쒖쭅 ??========
+ 
+             if (outputIsFramebuffer) {
+                 val flipMatrix = floatArrayOf(
+@@ -1607,4 +1626,4 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
+         }
+     }
+ 
+-}
++}
+\ No newline at end of file

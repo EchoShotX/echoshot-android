@@ -37,6 +37,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import com.echoshot.app.R
+import com.echoshot.app.utils.DeploymentModeManager
 import com.echoshot.app.utils.setupBottomNavigationBar
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -133,6 +134,10 @@ class PhotoFragment : Fragment() {
                 openGallery()
             },
             onProfileClick = {
+                // 배포모드일 때는 프로필로 이동하지 않음
+                if (DeploymentModeManager.isDeploymentMode()) {
+                    return@setupBottomNavigationBar
+                }
                 // 사진 모드에서 프로필로 이동
                 val action = PhotoFragmentDirections.actionPhotoFragmentToProfileFragment()
                 findNavController().navigate(action)

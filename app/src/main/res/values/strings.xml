@@ -25,6 +25,7 @@
     <string name="camera">Camera</string>
     <string name="guide">Guide</string>
     <string name="move">Go</string>
+    <string name="auto_start_camera">Launch camera automatically on app start</string>
     
     <!-- Buttons -->
     <string name="auto_crop">Auto Composition</string>
@@ -39,6 +40,8 @@
     
     <!-- Dialog -->
     <string name="premium_video">Premium Video</string>
+    <string name="premium_video_creating">Creating premium video</string>
+    <string name="wait_for_completion">Please wait while recording/editing completes</string>
     <string name="base_video_not_found">Base video not found.</string>
     <string name="estimated_time">Est. %d sec</string>
     <string name="estimated_time_remaining">Est. %d sec remaining</string>
@@ -89,4 +92,38 @@
     <string name="guide_desc_4">After analysis, watch the subject enlarged with stable framing.</string>
     <string name="next">Next</string>
     <string name="confirm">Done</string>
+    
+    <!-- Error Messages for Tracking -->
+    <string name="error_log_file_not_found">Cannot access tracking data. The file may have been deleted. Please re-record.</string>
+    <string name="error_device_low_spec">This device does not support tracking. The device specifications are too low.</string>
+    
+    <!-- Fancam Edit -->
+    <string name="fancam_edit_title">Start Edit</string>
+    <string name="fancam_show_more">SHOW MORE</string>
+    <string name="fancam_select_video">Select Video to Edit</string>
+    <string name="fancam_processing">Processing…</string>
+    <string name="fancam_history_title">Edit History</string>
+    <string name="fancam_edit_label">FanCam</string>
+    <string name="fancam_status_waiting">Waiting</string>
+    <string name="fancam_status_processing">Processing</string>
+    <string name="fancam_status_complete">Complete</string>
+    <string name="fancam_status_failed">Failed</string>
+    <string name="fancam_complete">FanCam edit complete!</string>
+    <string name="fancam_failed">FanCam edit failed</string>
+    <string name="fancam_video_info_error">Cannot get video info</string>
+
+    <!-- Permission -->
+    <string name="permission_camera_required_title">Camera Permission Required</string>
+    <string name="permission_camera_required_message">EchoShot is a camera app.\nCamera permission is required to use this app.\n\nPlease allow camera permission in Settings.</string>
+    <string name="permission_go_to_settings">Go to Settings</string>
+    <string name="permission_exit_app">Exit App</string>
+    <string name="permission_cancel">Cancel</string>
+    <string name="permission_cannot_open_settings">Cannot open settings</string>
+    <string name="fancam_history_delete_confirm">Are you sure you want to delete this history item?</string>
+    <string name="delete_button">Delete</string>
+    <string name="close_button">Cancel</string>
+    <string name="fancam_mode_single">Single Video</string>
+    <string name="fancam_mode_auto_fast">Fast Track</string>
+    <string name="fancam_mode_auto_high">High Track</string>
+    <string name="fancam_mode_hybrid">Hybrid Picker</string>
 </resources>

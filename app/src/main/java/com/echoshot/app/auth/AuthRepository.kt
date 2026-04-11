@@ -8,6 +8,7 @@ import androidx.browser.customtabs.CustomTabsIntent
 import com.echoshot.app.auth.models.ApiResponseDto
 import com.echoshot.app.auth.models.AuthExchangeRequest
 import com.echoshot.app.auth.models.AuthExchangeResponse
+import com.echoshot.app.auth.models.LogoutRequest
 import com.echoshot.app.network.RetrofitClient
 
 class AuthRepository(private val context: Context) {
@@ -78,6 +79,15 @@ class AuthRepository(private val context: Context) {
         Log.d(TAG, "====================")
         
         return authApi.exchangeCode(request)
+    }
+
+    /**
+     * 로그아웃을 요청합니다.
+     * 서버에서 리프레시 토큰을 무효화합니다.
+     */
+    suspend fun logout(refreshToken: String): ApiResponseDto<String> {
+        val request = LogoutRequest(refreshToken)
+        return authApi.logout(request)
     }
 }
 

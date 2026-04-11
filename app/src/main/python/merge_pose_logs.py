@@ -29,6 +29,142 @@ KEYPOINT_SIGMAS = np.array([
 
 TORSO_INDICES = [0, 1, 2, 3, 4, 5, 6, 11, 12]
 
+# ===== 빠른 추적 모드 스무딩 함수들 (칼만 필터 + RTS + 직선화) =====
+def _line_at(t0, y0, t1, y1, t):
+    """직선 보간"""
+    alpha = (t - t0) / (t1 - t0) if t1 != t0 else 0.0
+    return y0 * (1 - alpha) + y1 * alpha
+
+def _rdp_time_series(ts_s, ys, eps, i0=0, i1=None, out=None):
+    """RDP: 수직 오차 기준 단순화"""
+    if out is None:
+        out, i1 = [], len(ts_s) - 1
+    if i0 == 0: out.append(i0)
+    if i1 <= i0 + 1:
+        out.append(i1)
+        return out
+    t0, y0 = ts_s[i0], ys[i0]
+    t1, y1 = ts_s[i1], ys[i1]
+    idx_max, err_max = -1, -1.0
+    for k in range(i0 + 1, i1):
+        y_hat = _line_at(t0, y0, t1, y1, ts_s[k])
+        err = abs(ys[k] - y_hat)
+        if err > err_max:
+            err_max, idx_max = err, k
+    if err_max > eps:
+        _rdp_time_series(ts_s, ys, eps, i0, idx_max, out)
+        _rdp_time_series(ts_s, ys, eps, idx_max, i1, out)
+    else:
+        out.append(i1)
+    return sorted(set(out))
+
+def _piecewise_linear_eased(ts_us, y_des, eps, min_seg_dur=0.18, corner_tau=0.10):
+    """직선 + 코너만 이음"""
+    ts_s = (np.asarray(ts_us, dtype=np.float64) - float(ts_us[0])) / 1e6
+    y = np.asarray(y_des, dtype=np.float64)
+    T = len(y)
+    if T <= 2: return y.copy()
+    
+    idxs = _rdp_time_series(ts_s, y, eps)
+    pruned = [idxs[0]]
+    for k in range(1, len(idxs)):
+        if ts_s[idxs[k]] - ts_s[pruned[-1]] >= min_seg_dur or k == len(idxs) - 1:
+            pruned.append(idxs[k])
+    idxs = pruned
+    
+    y_lin = np.zeros_like(y)
+    for a, b in zip(idxs[:-1], idxs[1:]):
+        t0, y0 = ts_s[a], y[a]
+        t1, y1 = ts_s[b], y[b]
+        if t1 == t0:
+            y_lin[a:b+1] = y0
+        else:
+            for i in range(a, b + 1):
+                y_lin[i] = _line_at(t0, y0, t1, y1, ts_s[i])
+    
+    y_out = y_lin.copy()
+    for j in range(1, len(idxs) - 1):
+        jc = idxs[j]
+        j0 = idxs[j-1]; j1 = idxs[j]; j2 = idxs[j+1]
+        half = 0.5 * corner_tau
+        tL = max(ts_s[j0], ts_s[j1] - half)
+        tR = min(ts_s[j2], ts_s[j1] + half)
+        if tR - tL < 1e-6: continue
+        vL = (y[j1] - y[j0]) / max(ts_s[j1] - ts_s[j0], 1e-6)
+        vR = (y[j2] - y[j1]) / max(ts_s[j2] - ts_s[j1], 1e-6)
+        yL = _line_at(ts_s[j0], y[j0], ts_s[j1], y[j1], tL)
+        yR = _line_at(ts_s[j1], y[j1], ts_s[j2], y[j2], tR)
+        dT = (tR - tL)
+        def hermite(s):
+            h00 = 2*s**3 - 3*s**2 + 1
+            h10 = s**3 - 2*s**2 + s
+            h01 = -2*s**3 + 3*s**2
+            h11 = s**3 - s**2
+            return h00*yL + h10*(dT*vL) + h01*yR + h11*(dT*vR)
+        iL = int(np.searchsorted(ts_s, tL, side='left'))
+        iR = int(np.searchsorted(ts_s, tR, side='right'))
+        for i in range(iL, iR):
+            s = (ts_s[i] - tL) / dT
+            y_out[i] = hermite(s)
+    return y_out
+
+def smoothstep01(x):
+    """0~1 사이 S-curve"""
+    x = max(0.0, min(1.0, x))
+    return x * x * (3 - 2 * x)
+
+def soft_deadband(prev, cur, eps):
+    """연속적 데드밴드"""
+    d = cur - prev
+    if abs(d) <= eps:
+        w = smoothstep01(abs(d) / max(eps, 1e-9))
+        return prev + w * d * 0.2
+    else:
+        sign = 1.0 if d > 0 else -1.0
+        m = abs(d) - eps
+        return prev + sign * (eps * 0.2 + m)
+
+def xyxy_to_cxcywh(bb):
+    """xyxy → cxcywh 변환"""
+    x1, y1, x2, y2 = bb
+    w = x2 - x1
+    h = y2 - y1
+    cx = (x1 + x2) * 0.5
+    cy = (y1 + y2) * 0.5
+    return np.array([cx, cy, w, h], dtype=np.float64)
+
+def cxcywh_to_xyxy(v):
+    """cxcywh → xyxy 변환"""
+    cx, cy, w, h = [float(x) for x in v]
+    return [cx - w*0.5, cy - h*0.5, cx + w*0.5, cy + h*0.5]
+
+def build_F(dt: float) -> np.ndarray:
+    """칼만 필터 전이 행렬"""
+    F = np.eye(8, dtype=np.float64)
+    for i in range(4):
+        F[i, i+4] = dt
+    return F
+
+def build_H() -> np.ndarray:
+    """칼만 필터 관측 행렬"""
+    H = np.zeros((4, 8), dtype=np.float64)
+    H[0,0] = H[1,1] = H[2,2] = H[3,3] = 1.0
+    return H
+
+def rts_smoother(xs, Ps, x_preds, P_preds, Fs):
+    """RTS 스무더 (뒤→앞 정보 반영)"""
+    T = len(xs)
+    x_s = [None]*T
+    P_s = [None]*T
+    x_s[-1] = xs[-1].copy()
+    P_s[-1] = Ps[-1].copy()
+    for k in range(T-2, -1, -1):
+        F = Fs[k+1]
+        C = Ps[k] @ F.T @ np.linalg.inv(P_preds[k+1])
+        x_s[k] = xs[k] + C @ (x_s[k+1] - x_preds[k+1])
+        P_s[k] = Ps[k] + C @ (P_s[k+1] - P_preds[k+1]) @ C.T
+    return x_s, P_s
+
 
 def normalize_skeleton(kps: List, min_conf: float = 0.3) -> Optional[List]:
     """
@@ -534,6 +670,107 @@ class PoseTracker:
             self.anchor_box[3] = (1 - slow_alpha) * self.anchor_box[3] + slow_alpha * det["y2"]
 
 
+def smart_smooth_interpolation(series: List[Optional[Dict]], key: str = "bbox") -> List[Dict]:
+    """
+    None 구간을 단순 직선이 아닌, 주변 프레임을 포함한 
+    부드러운 곡선(S-Curve)으로 보간합니다.
+    직선 보간의 급출발/급정거 느낌을 없애고 부드러운 전환을 만듭니다.
+    """
+    T = len(series)
+    valid_idx = [i for i, s in enumerate(series) if s is not None and s.get(key) is not None]
+    if len(valid_idx) < 2:
+        # 유효한 데이터가 부족하면 기본값으로 채움
+        def make_default(frame_idx: int) -> Dict:
+            return {
+                "frame": frame_idx,
+                "pts_ms": 0,
+                "src_w": 1920,
+                "src_h": 1080,
+                "screenWidth": 1920,
+                "screenHeight": 1080,
+                "zoom": 1.0,
+                "bbox": [100, 200, 300, 600],
+                "keypoints": [],
+                "score": 0.0,
+                "similarity": 0.0
+            }
+        return [make_default(i) if series[i] is None else deepcopy(series[i]) for i in range(T)]
+    
+    out = [deepcopy(s) if s else None for s in series]
+    
+    # None 구간 탐색 및 S-Curve 보간
+    i = 0
+    while i < T:
+        if out[i] is None:
+            start_idx = i - 1
+            while i < T and out[i] is None:
+                i += 1
+            end_idx = i
+            
+            # 보간 구간 (start_idx ~ end_idx)
+            if start_idx >= 0 and end_idx < T and out[start_idx] is not None and out[end_idx] is not None:
+                # 1. 보간 거리 계산 (얼마나 많이 튀었는가?)
+                b1 = out[start_idx][key]
+                b2 = out[end_idx][key]
+                dist = math.sqrt((b1[0]-b2[0])**2 + (b1[1]-b2[1])**2)
+                
+                # 2. 거리에 비례하여 수정할 주변 프레임 범위 결정 (곡률 조정)
+                # 거리가 100px 차이면 전후 5프레임 정도를 곡선화에 참여시킴
+                blend_range = max(3, min(15, int(dist / 20)))
+                
+                s_fit = max(0, start_idx - blend_range)
+                e_fit = min(T - 1, end_idx + blend_range)
+                
+                # 3. S-Curve(Smoothstep) 적용하여 속도 변화를 부드럽게
+                for t in range(start_idx + 1, end_idx):
+                    alpha = (t - start_idx) / (end_idx - start_idx)
+                    # S-Curve: alpha^2 * (3 - 2*alpha) - 부드러운 가속/감속
+                    t_smooth = alpha * alpha * (3 - 2 * alpha)
+                    
+                    new_bbox = [
+                        b1[j] * (1 - t_smooth) + b2[j] * t_smooth
+                        for j in range(4)
+                    ]
+                    
+                    # 새로운 Dict 생성 (주변 프레임 정보 복사)
+                    out[t] = deepcopy(out[start_idx])
+                    out[t]["frame"] = t if "frame" in out[t] else t
+                    out[t][key] = new_bbox
+            else:
+                # 배열 끝단 처리
+                fill_idx = end_idx if start_idx < 0 else start_idx
+                if fill_idx >= 0 and fill_idx < T and out[fill_idx] is not None:
+                    for t in range(max(0, start_idx + 1), min(end_idx, T)):
+                        if out[t] is None:
+                            out[t] = deepcopy(out[fill_idx])
+                            out[t]["frame"] = t if "frame" in out[t] else t
+        else:
+            i += 1
+    
+    # None이 남아있으면 기본값으로 채움
+    for i in range(T):
+        if out[i] is None:
+            if i > 0 and out[i-1] is not None:
+                out[i] = deepcopy(out[i-1])
+                out[i]["frame"] = i if "frame" in out[i] else i
+            else:
+                out[i] = {
+                    "frame": i,
+                    "pts_ms": 0,
+                    "src_w": 1920,
+                    "src_h": 1080,
+                    "screenWidth": 1920,
+                    "screenHeight": 1080,
+                    "zoom": 1.0,
+                    "bbox": [100, 200, 300, 600],
+                    "keypoints": [],
+                    "score": 0.0,
+                    "similarity": 0.0
+                }
+    
+    return out
+
+
 def linear_interpolate_boxes(series: List[Optional[Dict]], key: str = "bbox") -> List[Dict]:
     """None인 프레임을 선형 보간"""
     T = len(series)
@@ -972,25 +1209,164 @@ def merge_pose_logs(
         if zoom_fixed_count > 0:
             print(f"⚠️ 첫 {zoom_fixed_count}개 프레임의 zoom을 {stable_zoom}으로 보정")
     
-    # 4) 초강력 노이즈 제거
+    # 4) 초강력 노이즈 제거 (더 강하게)
     tracked = remove_spike_noise(
         tracked, key="bbox",
-        window=11,             # 전후 5프레임씩 비교 (더 넓게)
-        pos_threshold=0.08,    # 위치: 대각선의 8% 초과하면 제거 (더 엄격)
-        size_threshold=0.15,   # 크기: 15% 초과 차이나면 제거 (더 엄격)
-        velocity_threshold=0.05  # 속도: 1프레임에 5% 이상 이동하면 제거 (더 엄격)
+        window=15,             # 전후 7프레임씩 비교 (더 넓게: 11 → 15)
+        pos_threshold=0.05,    # 위치: 대각선의 5% 초과하면 제거 (더 엄격: 8% → 5%)
+        size_threshold=0.10,   # 크기: 10% 초과 차이나면 제거 (더 엄격: 15% → 10%)
+        velocity_threshold=0.03  # 속도: 1프레임에 3% 이상 이동하면 제거 (더 엄격: 5% → 3%)
     )
     
-    # 4.5) None 보간
-    tracked = linear_interpolate_boxes(tracked, key="bbox")
+    # 4.5) None 보간 (S-Curve로 부드럽게)
+    tracked = smart_smooth_interpolation(tracked, key="bbox")
     
-    # 4.6) 강한 이동평균 스무딩 (k=11: 전후 5프레임씩)
-    tracked = moving_average_smooth(tracked, key="bbox", k=11)
+    # 4.6) numpy 기반 가우시안 곡선 스무딩 (scipy 없이 구현)
+    # 유효한 bbox가 있는 프레임만 추출
+    valid_tracked = [(i, t) for i, t in enumerate(tracked) if t is not None and t.get("bbox")]
+    if len(valid_tracked) < 3:
+        print(f"⚠️ 유효한 bbox가 부족하여 Savitzky-Golay 스무딩을 건너뜁니다")
+    else:
+        # 원본 bbox 데이터 추출
+        bboxes_list = []
+        for i, t in valid_tracked:
+            bboxes_list.append(t["bbox"])
+        
+        T = len(bboxes_list)
+        sw = valid_tracked[0][1].get("src_w", 1920)
+        sh = valid_tracked[0][1].get("src_h", 1080)
+        
+        # bbox를 cxcywh로 변환
+        cx_arr = np.array([xyxy_to_cxcywh(bb)[0] for bb in bboxes_list])
+        cy_arr = np.array([xyxy_to_cxcywh(bb)[1] for bb in bboxes_list])
+        w_arr = np.array([xyxy_to_cxcywh(bb)[2] for bb in bboxes_list])
+        h_arr = np.array([xyxy_to_cxcywh(bb)[3] for bb in bboxes_list])
+        
+        # 윈도우 크기 설정 (홀수 필수)
+        # 댄스 영상처럼 가만히 있는 구간이 많으면 윈도우를 크게 잡는 것이 핵심
+        # 영상 FPS가 30이라면 51프레임은 약 1.7초, 91프레임은 약 3초의 흐름을 봅니다
+        pos_window = 51   # 위치용 (더 크게 확장: 31 → 51)
+        size_window = 91  # 크기용 (울렁임 방지를 위해 대폭 확장: 61 → 91)
+        
+        # 윈도우 크기가 데이터 길이보다 크면 조정
+        if pos_window >= T:
+            pos_window = T if T % 2 == 1 else max(3, T - 1)
+        if size_window >= T:
+            size_window = T if T % 2 == 1 else max(3, T - 1)
+        
+        # numpy 기반 가우시안 가중 이동평균 (Savitzky-Golay와 유사한 효과)
+        def gaussian_smooth(arr, window_size, sigma=None):
+            """가우시안 커널을 사용한 스무딩"""
+            if window_size < 3:
+                return arr.copy()
+            if window_size >= len(arr):
+                window_size = len(arr) if len(arr) % 2 == 1 else max(3, len(arr) - 1)
+            
+            if sigma is None:
+                sigma = window_size / 6.0  # 표준편차 자동 설정
+            
+            # 가우시안 커널 생성
+            half = window_size // 2
+            x = np.arange(-half, half + 1, dtype=np.float64)
+            kernel = np.exp(-0.5 * (x / sigma) ** 2)
+            kernel = kernel / kernel.sum()
+            
+            # 패딩 (경계 처리 - edge mode)
+            padded = np.pad(arr, (half, half), mode='edge')
+            
+            # 컨볼루션
+            smoothed = np.convolve(padded, kernel, mode='valid')
+            return smoothed
+        
+        # 다중 패스 스무딩 (더 부드럽게)
+        def multi_pass_smooth(arr, window_size, passes=2):
+            """여러 번 스무딩을 적용하여 더 부드럽게"""
+            result = arr.copy()
+            for _ in range(passes):
+                result = gaussian_smooth(result, window_size)
+            return result
+        
+        # 위치는 1패스, 크기는 2패스 (더 강하게)
+        smooth_cx = multi_pass_smooth(cx_arr, pos_window, passes=1)
+        smooth_cy = multi_pass_smooth(cy_arr, pos_window, passes=1)
+        smooth_w = multi_pass_smooth(w_arr, size_window, passes=2)
+        smooth_h = multi_pass_smooth(h_arr, size_window, passes=2)
+        
+        # 2차 처리: 미세 떨림 강제 억제 (Hysteresis 필터링)
+        # 정수형 변환 시 발생하는 픽셀 계단 현상을 방지하기 위한 강력한 임계값 처리
+        final_cx, final_cy = np.copy(smooth_cx), np.copy(smooth_cy)
+        final_w, final_h = np.copy(smooth_w), np.copy(smooth_h)
+        
+        # 임계값 설정 (0.8% - 상황에 따라 0.005 ~ 0.01 조절 가능)
+        size_threshold = 0.008  # 크기 변화 임계값: 0.8% 미만이면 고정
+        pos_threshold_px = 2.0  # 위치 변화 임계값: 2픽셀 미만 이동은 무시
+        
+        for i in range(1, len(final_w)):
+            # 크기 고정 로직 (가로세로 비율 유지를 위해 같이 고정)
+            if final_w[i-1] > 0:
+                rel_change_w = abs(final_w[i] - final_w[i-1]) / final_w[i-1]
+                if rel_change_w < size_threshold:
+                    final_w[i] = final_w[i-1]
+                    final_h[i] = final_h[i-1]  # 가로세로 비율 유지
+            
+            # 위치 고정 로직 (중심점 이동이 너무 적으면 고정)
+            dist = math.sqrt((final_cx[i] - final_cx[i-1])**2 + (final_cy[i] - final_cy[i-1])**2)
+            if dist < pos_threshold_px:
+                final_cx[i] = final_cx[i-1]
+                final_cy[i] = final_cy[i-1]
+        
+        # 최종 결과 사용
+        smooth_cx, smooth_cy = final_cx, final_cy
+        smooth_w, smooth_h = final_w, final_h
+        
+        # 결과를 tracked에 반영
+        for idx, (orig_idx, t) in enumerate(valid_tracked):
+            cx, cy, w, h = smooth_cx[idx], smooth_cy[idx], max(smooth_w[idx], 2.0), max(smooth_h[idx], 2.0)
+            sm_bb = cxcywh_to_xyxy([cx, cy, w, h])
+            tracked[orig_idx]["bbox"] = sm_bb
+        
+        print(f"📊 후처리 완료: 강력 노이즈 제거 + 보간 + 가우시안 곡선 스무딩 (위치:{pos_window}, 크기:{size_window})")
     
-    # 4.7) 2차 스무딩 (더 부드럽게)
-    tracked = moving_average_smooth(tracked, key="bbox", k=7)
+    # 4.7) zoom 값 스무딩 (zoom이 급격히 변하면 최종 crop_box에서 튀는 현상 방지)
+    # 전체 tracked 리스트에서 zoom 값들만 따로 뽑아 가우시안 스무딩 적용
+    zoom_values = []
+    zoom_indices = []
+    for i, t in enumerate(tracked):
+        if t is not None and t.get("zoom") is not None:
+            zoom_values.append(float(t["zoom"]))
+            zoom_indices.append(i)
     
-    print(f"📊 후처리 완료: 강력 노이즈 제거 + 보간 + 2단계 스무딩")
+    if len(zoom_values) >= 3:
+        # 가우시안 스무딩 함수 (위에서 정의된 것 재사용)
+        def gaussian_smooth_zoom(arr, window_size, sigma=None):
+            """zoom 값용 가우시안 스무딩"""
+            if window_size < 3:
+                return arr.copy()
+            if window_size >= len(arr):
+                window_size = len(arr) if len(arr) % 2 == 1 else max(3, len(arr) - 1)
+            if sigma is None:
+                sigma = window_size / 6.0
+            half = window_size // 2
+            x = np.arange(-half, half + 1, dtype=np.float64)
+            kernel = np.exp(-0.5 * (x / sigma) ** 2)
+            kernel = kernel / kernel.sum()
+            padded = np.pad(arr, (half, half), mode='edge')
+            smoothed = np.convolve(padded, kernel, mode='valid')
+            return smoothed
+        
+        zoom_arr = np.array(zoom_values, dtype=np.float64)
+        zoom_window = 31  # zoom 스무딩 윈도우 (위치와 동일하게)
+        if zoom_window >= len(zoom_arr):
+            zoom_window = len(zoom_arr) if len(zoom_arr) % 2 == 1 else max(3, len(zoom_arr) - 1)
+        
+        smoothed_zooms = gaussian_smooth_zoom(zoom_arr, zoom_window)
+        
+        # 스무딩된 zoom 값을 tracked에 반영
+        for idx, orig_idx in enumerate(zoom_indices):
+            if tracked[orig_idx] is not None:
+                tracked[orig_idx]["zoom"] = float(smoothed_zooms[idx])
+        
+        print(f"📊 zoom 스무딩 완료: {len(zoom_values)}개 값, 윈도우={zoom_window}")
     
     # 5) 크롭 박스 계산 (zoom 역변환 + 9:16)
     merged = []

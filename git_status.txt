@@ -1,0 +1,86 @@
+﻿ M app/build.gradle
+ M app/src/main/java/com/echoshot/app/CameraActivity.kt
+ M app/src/main/java/com/echoshot/app/CustomHardwarePipeline.kt
+ M app/src/main/java/com/echoshot/app/CustomHardwarePipelineDefault.kt
+ M app/src/main/java/com/echoshot/app/EncoderWrapper.kt
+ M app/src/main/java/com/echoshot/app/FrameCropper.kt
+ M app/src/main/java/com/echoshot/app/HardwarePipeline.kt
+ M app/src/main/java/com/echoshot/app/MyApp.kt
+ M app/src/main/java/com/echoshot/app/VideoPipeline.kt
+ M app/src/main/java/com/echoshot/app/auth/AuthCallbackActivity.kt
+ M app/src/main/java/com/echoshot/app/auth/AuthRepository.kt
+ M app/src/main/java/com/echoshot/app/fragments/CustomFrontPreviewFragment.kt
+ M app/src/main/java/com/echoshot/app/fragments/CustomPreviewFragment.kt
+ M app/src/main/java/com/echoshot/app/fragments/GalleryFragment.kt
+ M app/src/main/java/com/echoshot/app/fragments/HomeFragment.kt
+ M app/src/main/java/com/echoshot/app/fragments/HybridPickerDialogFragment.kt
+ M app/src/main/java/com/echoshot/app/fragments/MakeAutoDetactionFragment.kt
+ M app/src/main/java/com/echoshot/app/fragments/OneHardwarePipeline.kt
+ M app/src/main/java/com/echoshot/app/fragments/PermissionsFragment.kt
+ M app/src/main/java/com/echoshot/app/fragments/PhotoFragment.kt
+ M app/src/main/java/com/echoshot/app/fragments/PhotoFrontFragment.kt
+ M app/src/main/java/com/echoshot/app/fragments/ProfileFragment.kt
+ M app/src/main/java/com/echoshot/app/ml/MoveNetMultiPose.kt
+ M app/src/main/java/com/echoshot/app/mp4detact/models/pose/PoseMoveNetAdapter.kt
+ M app/src/main/java/com/echoshot/app/network/AuthApiService.kt
+ M app/src/main/java/com/echoshot/app/network/RetrofitClient.kt
+ M app/src/main/java/com/echoshot/app/ui/ZoomRulerAdapter.kt
+ M app/src/main/java/com/echoshot/app/ui/ZoomTickView.kt
+ M app/src/main/java/com/echoshot/app/utils/NavigationBarUtils.kt
+ M app/src/main/python/merge_pose_logs.py
+ M app/src/main/res/drawable/guide_sample_1.png
+ M app/src/main/res/drawable/guide_sample_2.png
+ M app/src/main/res/drawable/guide_sample_3.png
+ M app/src/main/res/drawable/guide_sample_4.png
+ M app/src/main/res/layout/bottom_navigation_bar.xml
+ M app/src/main/res/layout/dialog_locked_thumbnail.xml
+ M app/src/main/res/layout/dialog_multi_hybrid_picker.xml
+ M app/src/main/res/layout/dialog_progress_blocking.xml
+ M app/src/main/res/layout/fragment_custom_preview.xml
+ M app/src/main/res/layout/fragment_home.xml
+ M app/src/main/res/layout/fragment_profile.xml
+ M app/src/main/res/navigation/nav_graph.xml
+ M app/src/main/res/values-ko/strings.xml
+ M app/src/main/res/values/arrays.xml
+ M app/src/main/res/values/strings.xml
+ M utils/src/main/java/com/example/android/camera/utils/CameraSizes.kt
+?? app/src/main/java/com/echoshot/app/auth/models/LogoutRequest.kt
+?? app/src/main/java/com/echoshot/app/auth/models/NotificationDto.kt
+?? app/src/main/java/com/echoshot/app/auth/models/VideoUploadModels.kt
+?? app/src/main/java/com/echoshot/app/fragments/FancamEditFragment.kt
+?? app/src/main/java/com/echoshot/app/fragments/NotificationBottomSheetFragment.kt
+?? app/src/main/java/com/echoshot/app/fragments/VideoUploadFragment.kt
+?? app/src/main/java/com/echoshot/app/network/NotificationApiService.kt
+?? app/src/main/java/com/echoshot/app/network/VideoApiService.kt
+?? app/src/main/java/com/echoshot/app/repository/
+?? app/src/main/java/com/echoshot/app/ui/NotificationAdapter.kt
+?? app/src/main/java/com/echoshot/app/ui/VideoZoomRulerAdapter.kt
+?? app/src/main/java/com/echoshot/app/ui/VideoZoomTickView.kt
+?? app/src/main/java/com/echoshot/app/utils/AutoStartCameraManager.kt
+?? app/src/main/java/com/echoshot/app/utils/DeploymentModeManager.kt
+?? app/src/main/res/drawable-in/
+?? app/src/main/res/drawable-ko/
+?? app/src/main/res/drawable-vi/
+?? app/src/main/res/drawable/bg_bottom_sheet_rounded.xml
+?? app/src/main/res/drawable/bg_home_box.xml
+?? app/src/main/res/drawable/bg_indicator_red.xml
+?? app/src/main/res/drawable/bg_indicator_red_small.xml
+?? app/src/main/res/drawable/bg_tag_gray.xml
+?? app/src/main/res/drawable/ic_export_file.png
+?? app/src/main/res/drawable/ic_notifications.xml
+?? app/src/main/res/drawable/ic_settings.xml
+?? app/src/main/res/drawable/switch_track_green.xml
+?? app/src/main/res/drawable/switch_track_selector.xml
+?? app/src/main/res/layout/dialog_video_upload_preview.xml
+?? app/src/main/res/layout/fragment_fancam_edit.xml
+?? app/src/main/res/layout/fragment_notification_bottom_sheet.xml
+?? app/src/main/res/layout/fragment_video_upload.xml
+?? app/src/main/res/layout/item_fancam_history.xml
+?? app/src/main/res/layout/item_notification.xml
+?? app/src/main/res/layout/item_upload_history.xml
+?? app/src/main/res/values-id/
+?? app/src/main/res/values-in/
+?? app/src/main/res/values-ko/arrays.xml
+?? app/src/main/res/values-vi/
+?? docs/
+?? git_status.txt

@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EchoShotX</string>
+    <string name="capture">Ambil Foto</string>
+    <string name="error_file_not_found">File rekaman tidak ditemukan</string>
+    <string name="recorder_shutdown_error">Rekaman berhenti terlalu cepat. Tekan lebih lama.</string>
+    
+    <!-- Home Fragment -->
+    <string name="shoot">Mulai Rekam</string>
+    <string name="quick_guide">Panduan Singkat</string>
+    <string name="camera">Kamera</string>
+    <string name="guide">Panduan</string>
+    <string name="move">Buka</string>
+    <string name="auto_start_camera">Buka kamera otomatis saat aplikasi dimulai</string>
+    
+    <!-- Buttons -->
+    <string name="auto_crop">Komposisi Otomatis</string>
+    <string name="manual_crop">Pilih Orang Manual</string>
+    <string name="start">Mulai</string>
+    <string name="center_mode">Fokus Orang</string>
+    <string name="wide_mode">Mode Wide</string>
+    <string name="fast_track">Lacak Cepat</string>
+    <string name="high_spec_track">Lacak High</string>
+    <string name="smaller">Lebih Kecil</string>
+    <string name="bigger">Lebih Besar</string>
+    
+    <!-- Dialog -->
+    <string name="premium_video">Video Premium</string>
+    <string name="premium_video_creating">Sedang membuat video premium...</string>
+    <string name="wait_for_completion">Mohon tunggu hingga proses rekam/edit selesai</string>
+    <string name="base_video_not_found">Video utama tidak ditemukan.</string>
+    <string name="estimated_time">Est %d detik</string>
+    <string name="estimated_time_remaining">Sisa waktu est %d detik</string>
+    <string name="please_wait">Mohon tunggu sebentar…</string>
+    <string name="start_with_mode">Mulai (%1$s)\nEst: %2$d detik</string>
+    <string name="fast_crop_complete">Pemotongan (Crop) cepat selesai!</string>
+    <string name="crop_failed">Gagal memotong (Crop)</string>
+    <string name="error_occurred">Terjadi kesalahan saat memproses</string>
+    <string name="close">Tutup</string>
+    <string name="high_spec_crop_complete">Pemotongan High-Spec selesai!</string>
+    <string name="high_spec_failed">Lacak High-Spec gagal</string>
+    
+    <!-- Gallery -->
+    <string name="gallery">Galeri</string>
+    <string name="extended_gallery">Galeri Tambahan</string>
+    <string name="today">Hari Ini</string>
+    <string name="yesterday">Kemarin</string>
+    <string name="cannot_get_filename">Tidak dapat mengambil nama file.</string>
+    <string name="invalid_filename">Nama file tidak valid</string>
+    <string name="delete">Hapus</string>
+    <string name="delete_single_item">Hapus item ini?</string>
+    <string name="delete_multiple_items">Hapus %d item?</string>
+    <string name="item_deleted">Item berhasil dihapus</string>
+    <string name="items_deleted">%d item berhasil dihapus</string>
+    <string name="selected_count">%d dipilih</string>
+    <string name="open_system_gallery">Buka Galeri Sistem</string>
+    <string name="cannot_open_gallery">Tidak dapat membuka galeri</string>
+    <string name="delete_permission_required">Izin diperlukan untuk menghapus file</string>
+    <string name="delete_permission_denied">Izin ditolak. Tidak dapat menghapus file.</string>
+    
+    <!-- Camera Mode -->
+    <string name="photo">Foto</string>
+    <string name="video">Video</string>
+    <string name="already_video_mode">Sudah dalam mode video</string>
+    <string name="already_photo_mode">Sudah dalam mode foto</string>
+    <string name="photo_saved">Foto berhasil disimpan!</string>
+    <string name="photo_save_failed">Gagal menyimpan foto</string>
+    <string name="photo_capture_failed">Gagal mengambil foto</string>
+    
+    <!-- Guide Dialog -->
+    <string name="guide_title_1">Zoom &amp; Rekam Seperti Kamera Biasa</string>
+    <string name="guide_desc_1">Cukup cubit layar untuk zoom in/out dan rekam video dengan komposisi yang Anda mau.</string>
+    <string name="guide_title_2">Cek Video di Galeri EchoShot</string>
+    <string name="guide_desc_2">Lihat video hasil rekaman Anda beserta versi wide-angle yang tersimpan bersamaan.</string>
+    <string name="guide_title_3">Buat Video Fokus pada Orang</string>
+    <string name="guide_desc_3">Pilih mode analisis dan tekan \'Mulai\' untuk membuat ulang video yang fokus sempurna pada subjek.</string>
+    <string name="guide_title_4">Nikmati Fancam Pelacakan Otomatis</string>
+    <string name="guide_desc_4">Setelah analisis selesai, tonton subjek dalam ukuran besar dengan komposisi yang stabil.</string>
+    <string name="next">Lanjut</string>
+    <string name="confirm">Selesai</string>
+    
+    <!-- Error Messages for Tracking -->
+    <string name="error_log_file_not_found">Tidak dapat mengakses data pelacakan. File mungkin sudah dihapus. Silakan rekam ulang.</string>
+    <string name="error_device_low_spec">Perangkat ini tidak mendukung fitur pelacakan. Spesifikasi perangkat terlalu rendah.</string>
+    
+    <!-- Permission -->
+    <string name="permission_camera_required_title">Izin Kamera Diperlukan</string>
+    <string name="permission_camera_required_message">EchoShot adalah aplikasi kamera.\nIzin kamera diperlukan untuk menggunakan aplikasi ini.\n\nSilakan izinkan akses kamera di Pengaturan.</string>
+    <string name="permission_go_to_settings">Buka Pengaturan</string>
+    <string name="permission_exit_app">Keluar</string>
+    <string name="permission_cancel">Batal</string>
+    <string name="permission_cannot_open_settings">Tidak dapat membuka pengaturan</string>
+    <string name="fancam_history_delete_confirm">Are you sure you want to delete this history item?</string>
+    <string name="delete_button">Delete</string>
+    <string name="close_button">Cancel</string>
+    <string name="fancam_mode_single">Single Video</string>
+    <string name="fancam_mode_auto_fast">Fast Track</string>
+    <string name="fancam_mode_auto_high">High Spec Track</string>
+    <string name="fancam_mode_hybrid">Hybrid Picker</string>
+    <string name="fancam_edit_title">Mulai Edit</string>
+    <string name="fancam_show_more">LIHAT LEBIH BANYAK</string>
+    <string name="fancam_select_video">Pilih Video untuk Diedit</string>
+    <string name="fancam_processing">Memproses…</string>
+    <string name="fancam_history_title">Riwayat Edit</string>
+</resources>

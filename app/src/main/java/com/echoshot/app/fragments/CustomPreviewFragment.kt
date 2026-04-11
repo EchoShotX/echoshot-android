@@ -48,6 +48,9 @@ import android.view.animation.DecelerateInterpolator
 import android.webkit.MimeTypeMap
 import android.widget.SeekBar
 import android.widget.Toast
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.LinearSnapHelper
+import androidx.recyclerview.widget.RecyclerView
 import androidx.core.animation.addListener
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -58,6 +61,7 @@ import androidx.navigation.NavController
 import androidx.navigation.Navigation
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
+import com.echoshot.app.utils.DeploymentModeManager
 import com.echoshot.app.utils.setupBottomNavigationBar
 import com.example.android.camera.utils.getPreviewOutputSize
 import com.echoshot.app.BuildConfig
@@ -71,6 +75,7 @@ import com.echoshot.app.databinding.FragmentCustomPreviewBinding
 import com.echoshot.app.ml.ModelType
 import com.echoshot.app.ml.MoveNet
 import com.echoshot.app.ml.MoveNetMultiPose
+import com.echoshot.app.ui.VideoZoomRulerAdapter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -132,6 +137,15 @@ class CustomPreviewFragment : Fragment() {
     }
 
     private var zoomLevel: Float = 1.0f
+    
+    // 줌 룰러 관련 변수 (동영상 촬영용 별도 UI)
+    private var zoomAdapter: VideoZoomRulerAdapter? = null
+    private var zoomRuler: RecyclerView? = null
+    private val cameraMinZoom = 1.0f
+    private val cameraMaxZoom = 10.0f
+    
+    // ✅ 사용자가 직접 터치로 스크롤 중인지 구분 (오토줌이 스크롤할 때는 false)
+    private var isUserTouchingZoomRuler = false
 
     // 맨 위 어딘가에 추가
     private enum class LensMode { WIDE, TELE }
@@ -289,6 +303,11 @@ class CustomPreviewFragment : Fragment() {
     private val isRecording = AtomicBoolean(false)
     private val isStopping = AtomicBoolean(false)
     
+    // ✅ 백그라운드 정리 작업 관리
+    private var cleanupJob: kotlinx.coroutines.Job? = null
+    @Volatile
+    private var isPausedForBackground = false
+    
     // ✅ 버튼 디바운스용
     @Volatile
     private var lastStopClick = 0L
@@ -299,8 +318,8 @@ class CustomPreviewFragment : Fragment() {
     private val cvRecordingComplete = ConditionVariable(false)
 
 
-    // ① PoseDetector 인스턴스
-    private lateinit var poseDetector: PoseDetector
+    // ① PoseDetector 인스턴스 (TFLite 로드 실패 시 null)
+    private var poseDetector: PoseDetector? = null
 
     // ② PixelCopy 루프용 핸들러 & Runnable
     private lateinit var pixelHandler: Handler
@@ -405,20 +424,29 @@ class CustomPreviewFragment : Fragment() {
         if (!isAdded || _fragmentBinding == null || viewLifecycleOwner.lifecycle.currentState < Lifecycle.State.STARTED) {
             return
         }
-        // 1) 추론
-        val rawPeople = poseDetector.estimatePoses(bitmap)
-
-        // 2) Single‑Pose 모델에는 boundingBox가 없으니 keyPoints로 박스 계산
-        // 로깅/오버레이용: 전체 키포인트로 박스 계산
-        val peopleWithBox = rawPeople.map { person ->
-            val xs = person.keyPoints.map { it.coordinate.x }
-            val ys = person.keyPoints.map { it.coordinate.y }
-            val left   = xs.minOrNull() ?: 0f
-            val right  = xs.maxOrNull() ?: 0f
-            val top    = ys.minOrNull() ?: 0f
-            val bottom = ys.maxOrNull() ?: 0f
-            person.boundingBox = RectF(left, top, right, bottom)
-            person
+        
+        // ✅ PoseDetector가 null이면 추론 스킵하지만 로그는 기록 (TFLite 로드 실패한 저사양 기기)
+        val detector = poseDetector
+        
+        // 1) 추론 (detector가 null이면 스킵)
+        val peopleWithBox = if (detector != null) {
+            val rawPeople = detector.estimatePoses(bitmap)
+            
+            // Single‑Pose 모델에는 boundingBox가 없으니 keyPoints로 박스 계산
+            // 로깅/오버레이용: 전체 키포인트로 박스 계산
+            rawPeople.map { person ->
+                val xs = person.keyPoints.map { it.coordinate.x }
+                val ys = person.keyPoints.map { it.coordinate.y }
+                val left   = xs.minOrNull() ?: 0f
+                val right  = xs.maxOrNull() ?: 0f
+                val top    = ys.minOrNull() ?: 0f
+                val bottom = ys.maxOrNull() ?: 0f
+                person.boundingBox = RectF(left, top, right, bottom)
+                person
+            }
+        } else {
+            // ✅ 트래킹 비활성화: 빈 리스트
+            emptyList()
         }
 
         // 2) 첫 번째 사람 정보가 있으면 채우고, 없으면 null/제로 배열로 채우기
@@ -431,23 +459,23 @@ class CustomPreviewFragment : Fragment() {
             val k = p.keyPoints.map { kp -> listOf(kp.coordinate.x, kp.coordinate.y, kp.score) }
             Pair(b, k)
         } else {
-            // 검출 없으면 bbox=null, keypoints는 17개 [0,0,0]
+            // ✅ 검출 없거나 트래킹 비활성화: bbox=null, keypoints는 17개 [0,0,0]
             val emptyK = List(17) { listOf(0f, 0f, 0f) }
             Pair(null, emptyK)
         }
 
-        // 3) **무조건** 로그 남기기
+        // 3) **무조건** 로그 남기기 (트래킹 비활성화되어도 줌/프레임 데이터는 기록)
         if (recordingStarted && this::logWriter.isInitialized) {
             logTrackingFrame(
                 frameIndex++,
                 System.nanoTime(),
                 zoomLevel,
-                bboxArr,    // null 가능
-                kpArr       // 항상 17개
+                bboxArr,    // null (트래킹 비활성화 또는 검출 없음)
+                kpArr       // 항상 17개 (트래킹 비활성화 시 모두 [0,0,0])
             )
         }
 
-        // 4)Auto‑Zoom 타깃 계산 (상체만 사용)
+        // 4)Auto‑Zoom 타깃 계산 (상체만 사용) - 트래킹 비활성화 시 스킵
         if (peopleWithBox.isNotEmpty() && autoZoom.isActive) {
             val person = peopleWithBox[0]
             
@@ -524,8 +552,7 @@ class CustomPreviewFragment : Fragment() {
                     // 파이프라인과 UI 반영
                     setZoomLevel(zoomLevel)
                     fragmentBinding.zoomLevelText.text = String.format("%.2fx", zoomLevel)
-                    fragmentBinding.zoomSlider.progress =
-                        ((zoomLevel - 1f) / 9f * fragmentBinding.zoomSlider.max).toInt()
+                    scrollZoomRulerTo(zoomLevel)
                 }
             }
         }
@@ -551,8 +578,7 @@ class CustomPreviewFragment : Fragment() {
                 zoomLevel = z
                 setZoomLevel(z)
                 fragmentBinding.zoomLevelText.text = String.format("%.2fx", z)
-                fragmentBinding.zoomSlider.progress =
-                    ((z - 1f) / 9f * fragmentBinding.zoomSlider.max).toInt()
+                scrollZoomRulerTo(z)
             }
             addListener(onEnd = { zoomAnimator = null }, onCancel = { zoomAnimator = null })
             start()
@@ -588,6 +614,107 @@ class CustomPreviewFragment : Fragment() {
             is CustomHardwarePipelineDefault ->
                 (pipeline as CustomHardwarePipelineDefault).setZoomLevel(z)
         }
+    }
+    
+    /** 줌 룰러 초기화 (PhotoFragment와 동일한 방식) */
+    private fun setupZoomRuler() {
+        zoomRuler = fragmentBinding.zoomRuler
+        val rv = zoomRuler ?: return
+        
+        val lm = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+        rv.layoutManager = lm
+        
+        // ✅ 스냅 헬퍼 제거 - 자유로운 스크롤
+        
+        // 1.0x ~ 10.0x 범위의 어댑터 생성 (동영상 촬영용)
+        val itemWidthDp = 10
+        val adapter = VideoZoomRulerAdapter(
+            minZoom = cameraMinZoom,
+            midZoom = cameraMinZoom, // 1.0x가 시작점
+            maxZoom = cameraMaxZoom,
+            ticksPerLogUnit = 10,    // ✅ 동영상용: 더 적은 눈금 (20 → 10)
+            itemWidthDp = itemWidthDp,
+            minLeftTicks = 0,
+            minRightTicks = 0
+        )
+        zoomAdapter = adapter
+        rv.adapter = adapter
+        
+        val itemWidthPx = (resources.displayMetrics.density * itemWidthDp).toInt()
+        
+        // ✅ PhotoFragment 방식: 패딩 = (화면절반) - (아이템절반)
+        rv.post {
+            if (rv.width <= 0) return@post
+            
+            val halfPadding = (rv.width / 2) - (itemWidthPx / 2)
+            rv.setPadding(halfPadding, 0, halfPadding, 0)
+            rv.clipToPadding = false
+            
+            // 패딩 설정 후 초기 위치로 스크롤 (0번 = 1.0x)
+            lm.scrollToPositionWithOffset(0, 0)
+        }
+        
+        // ✅ PhotoFragment 방식: 텍스트만 변경 최소화, 줌은 항상 즉시 업데이트
+        var lastZoomText = "1.00x"
+        var lastCalculatedZoom = 1.0f
+        
+        rv.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                val adapter = zoomAdapter ?: return
+                
+                // ✅ PhotoFragment 방식: computeHorizontalScrollOffset 사용
+                val scrollOffset = recyclerView.computeHorizontalScrollOffset().toFloat()
+                
+                // ✅ 위치를 범위 내로 제한 (오버스크롤 방지)
+                val maxPos = (adapter.total - 1).coerceAtLeast(0)
+                val posF = (scrollOffset / itemWidthPx).coerceIn(0f, maxPos.toFloat())
+                
+                val z = adapter.positionToZoom(posF).coerceIn(cameraMinZoom, cameraMaxZoom)
+                lastCalculatedZoom = z
+                
+                // ✅ 사용자가 직접 터치해서 스크롤할 때만 오토줌 끄기
+                if (isUserTouchingZoomRuler) {
+                    disableAutoZoom()
+                }
+                zoomLevel = z
+                setZoomLevel(z)
+                
+                // ✅ 텍스트는 변경될 때만 업데이트 (부드럽게)
+                val newText = displayLabelFor(z)
+                if (newText != lastZoomText) {
+                    showZoomHUD(newText)  // ✅ W/T 숨기고 줌 레벨 표시
+                    lastZoomText = newText
+                }
+            }
+            
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                when (newState) {
+                    RecyclerView.SCROLL_STATE_DRAGGING -> {
+                        // ✅ 사용자가 터치해서 드래그 시작
+                        isUserTouchingZoomRuler = true
+                    }
+                    RecyclerView.SCROLL_STATE_IDLE -> {
+                        // ✅ 스크롤 멈추면 최종 줌 확정
+                        isUserTouchingZoomRuler = false
+                        zoomLevel = lastCalculatedZoom
+                        setZoomLevel(lastCalculatedZoom)
+                    }
+                    RecyclerView.SCROLL_STATE_SETTLING -> {
+                        // 관성 스크롤 중 - 사용자 터치 상태 유지
+                    }
+                }
+            }
+        })
+    }
+    
+    /** 줌 룰러를 특정 줌 값으로 스크롤 */
+    private fun scrollZoomRulerTo(zoom: Float) {
+        val rv = zoomRuler ?: return
+        val adapter = zoomAdapter ?: return
+        val lm = rv.layoutManager as? LinearLayoutManager ?: return
+        
+        val pos = adapter.zoomToPosition(zoom)
+        lm.scrollToPositionWithOffset(pos, 0)
     }
 
     // 프레임별 로깅 헬퍼
@@ -665,16 +792,32 @@ class CustomPreviewFragment : Fragment() {
         val clamped = evSteps.coerceIn(range.lower, range.upper)
         currentAeComp = clamped
 
-        val builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-            pipeline.getPreviewTargets().forEach { addTarget(it) }
-            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-            set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, clamped)
-            // (필요 시 AF/AWB 모드도 유지)
-            // ✅ 망원 렌즈 비율 유지를 위해 16:9 크롭 적용
-            apply16x9Crop(this, args.forcePhysicalId)
+        // ✅ 카메라/세션 초기화 여부 체크
+        if (!::camera.isInitialized) {
+            Log.w(TAG, "⚠️ applyExposureComp: camera가 아직 초기화되지 않음")
+            aeCompRange?.let { evSeek.progress = clamped - it.lower }
+            return
         }
-        session.setRepeatingRequest(builder.build(), null, cameraHandler)
+        if (!::session.isInitialized || isSessionClosed(session)) {
+            Log.w(TAG, "⚠️ applyExposureComp: 세션이 닫혀있어 노출 보정 적용 불가")
+            aeCompRange?.let { evSeek.progress = clamped - it.lower }
+            return
+        }
+
+        try {
+            val builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                pipeline.getPreviewTargets().forEach { addTarget(it) }
+                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, clamped)
+                // (필요 시 AF/AWB 모드도 유지)
+                // ✅ 망원 렌즈 비율 유지를 위해 16:9 크롭 적용
+                apply16x9Crop(this, args.forcePhysicalId)
+            }
+            session.setRepeatingRequest(builder.build(), null, cameraHandler)
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ applyExposureComp 실패: ${e.message}")
+        }
 
         // 시크바 동기화
         aeCompRange?.let { evSeek.progress = clamped - it.lower }
@@ -742,7 +885,20 @@ class CustomPreviewFragment : Fragment() {
                     }
                 findNavController().navigate(action)
             },
+            onArchiveClick = {
+                // 배포모드일 때는 업로드 페이지로 이동하지 않음
+                if (DeploymentModeManager.isDeploymentMode()) {
+                    return@setupBottomNavigationBar
+                }
+                // 카메라에서 업로드 페이지로 이동
+                val action = CustomPreviewFragmentDirections.actionCustomPreviewFragmentToFancamEditFragment()
+                findNavController().navigate(action)
+            },
             onProfileClick = {
+                // 배포모드일 때는 프로필로 이동하지 않음
+                if (DeploymentModeManager.isDeploymentMode()) {
+                    return@setupBottomNavigationBar
+                }
                 // 카메라에서 프로필로 이동
                 val action = CustomPreviewFragmentDirections.actionCustomPreviewFragmentToProfileFragment()
                 findNavController().navigate(action)
@@ -760,25 +916,8 @@ class CustomPreviewFragment : Fragment() {
         )
 
 
-        // ✅ 줌 슬라이더 리스너 등록
-        fragmentBinding.zoomSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) disableAutoZoom()
-
-                // 내부 로직용 줌(그대로 1.0x ~ 10.0x)
-                zoomLevel = 1.0f + (progress / 1000f) * 9.0f
-
-                // 파이프라인엔 내부 줌 그대로
-                setZoomLevel(zoomLevel)
-
-                // UI엔 렌즈에 맞춰 표기 (Tele면 ×3)
-                val label = displayLabelFor(zoomLevel)
-                fragmentBinding.zoomLevelText.text = label
-                showZoomHUD(label)
-            }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
-            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
-        })
+        // ✅ 줌 룰러 설정 (사진촬영과 동일한 눈금자 스타일)
+        setupZoomRuler()
 
         // ✅ 모드 스위치: 사진 버튼 → PhotoFragment로 이동
         view.findViewById<View>(R.id.btn_mode_photo)?.setOnClickListener {
@@ -827,8 +966,9 @@ class CustomPreviewFragment : Fragment() {
                     val newZoom = (pinchStartZoom * accumulatedScale).coerceIn(1.0f, 10.0f)
                     setZoomLevel(newZoom)
                     fragmentBinding.zoomLevelText.text = String.format("%.2fx", newZoom)
-                    fragmentBinding.zoomSlider.progress =
-                        (((newZoom - 1f) / 9f) * fragmentBinding.zoomSlider.max).toInt()
+                    
+                    // 줌 룰러 위치 업데이트
+                    scrollZoomRulerTo(newZoom)
 
                     showZoomHUD(String.format("%.2fx", zoomLevel))
 
@@ -983,12 +1123,18 @@ class CustomPreviewFragment : Fragment() {
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
             override fun surfaceCreated(holder: SurfaceHolder) {
+                // ✅ fragmentBinding이 null이면 초기화 중단
+                val binding = _fragmentBinding ?: run {
+                    Log.w(TAG, "⚠️ surfaceCreated(): fragmentBinding이 null입니다. 초기화 중단")
+                    return
+                }
+                
                 // ✅ 1) 물리 카메라별로 16:9 프리뷰 사이즈 선택
                 val previewSize = if (args.forcePhysicalId != null) {
                     pickPreviewSize16x9For(args.forcePhysicalId!!, SurfaceHolder::class.java)
                 } else {
                     getPreviewOutputSize(
-                        fragmentBinding.viewFinder.display,
+                        binding.viewFinder.display,
                         characteristics,
                         SurfaceHolder::class.java
                     )
@@ -996,7 +1142,7 @@ class CustomPreviewFragment : Fragment() {
 
                 // 뷰 비율/버퍼 고정 (버퍼를 먼저 고정해 두면 크롭 이슈가 줄어듦)
                 holder.setFixedSize(previewSize.width, previewSize.height)
-                fragmentBinding.viewFinder.setAspectRatio(previewSize.width, previewSize.height)
+                binding.viewFinder.setAspectRatio(previewSize.width, previewSize.height)
 
                 currentPreviewSize = previewSize
 
@@ -1012,9 +1158,31 @@ class CustomPreviewFragment : Fragment() {
                     )
                 }
 
-                fragmentBinding.viewFinder.post {
-                    pipeline.createResources(holder.surface)
-                    initializeCamera()
+                binding.viewFinder.post {
+                    // ✅ 이전 정리 작업이 진행 중이면 완료될 때까지 대기
+                    if (cleanupJob?.isActive == true) {
+                        Log.d(TAG, "⏳ SurfaceHolder: 이전 정리 작업 완료 대기 중...")
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            cleanupJob?.join()
+                            Log.d(TAG, "✅ SurfaceHolder: 이전 정리 작업 완료, 카메라 초기화 시작")
+                            
+                            // ✅ Surface 유효성 재확인 (정리 작업 완료 후 Surface가 유효한지 확인)
+                            if (!holder.surface.isValid) {
+                                Log.e(TAG, "❌ Surface가 유효하지 않습니다. 초기화 중단")
+                                return@launch
+                            }
+                            
+                            initPipelineWithRetry(holder.surface)
+                        }
+                    } else {
+                        // ✅ Surface 유효성 확인
+                        if (!holder.surface.isValid) {
+                            Log.e(TAG, "❌ Surface가 유효하지 않습니다. 초기화 중단")
+                            return@post
+                        }
+                        
+                        initPipelineWithRetry(holder.surface)
+                    }
                     // ✅ PixelCopy 루프는 녹화 시작 시에만 실행 (발열 방지)
                 }
             }
@@ -1302,6 +1470,16 @@ class CustomPreviewFragment : Fragment() {
 
     @SuppressLint("MissingPermission")
     private fun triggerFocusAtPoint(xNormView: Float, yNormView: Float) {
+        // ✅ 카메라/세션 초기화 여부 체크
+        if (!::camera.isInitialized) {
+            Log.w(TAG, "⚠️ triggerFocusAtPoint: camera가 아직 초기화되지 않음")
+            return
+        }
+        if (!::session.isInitialized || isSessionClosed(session)) {
+            Log.w(TAG, "⚠️ triggerFocusAtPoint: 세션이 아직 초기화되지 않았거나 닫혀있음")
+            return
+        }
+
         val sensorActive = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
 
         val previewSize = currentPreviewSize
@@ -1463,6 +1641,8 @@ class CustomPreviewFragment : Fragment() {
         var height = args.height
         var orientationHint = orientation
 
+        Log.d("EncoderDebug", "🔍 [createEncoder] args: width=${args.width}, height=${args.height}, orientation=$orientation")
+
         if (args.useHardware) {
             if (orientation == 90 || orientation == 270) {
                 width = args.height
@@ -1470,6 +1650,26 @@ class CustomPreviewFragment : Fragment() {
             }
             orientationHint = 0
         }
+
+        // ✅ 해상도를 4K (3840x2160)로 강제 설정
+        // orientation이 90/270이면 가로/세로를 바꿔서 2160x3840이 되어야 하지만,
+        // 일반적으로는 3840x2160 (가로 x 세로)로 저장하는 것이 표준
+        val targetWidth = 3840
+        val targetHeight = 2160
+        
+        // orientation이 90/270이고 세로 모드 촬영이면 2160x3840으로 저장
+        val finalWidth = if ((orientation == 90 || orientation == 270) && args.useHardware) {
+            targetHeight  // 2160
+        } else {
+            targetWidth   // 3840
+        }
+        val finalHeight = if ((orientation == 90 || orientation == 270) && args.useHardware) {
+            targetWidth   // 3840
+        } else {
+            targetHeight  // 2160
+        }
+
+        Log.d("EncoderDebug", "📐 [createEncoder] 최종 해상도: width=$finalWidth, height=$finalHeight (4K 강제 설정)")
 
         // 🔑 세션 UUID + 인코더 종류(zoomed/original) + 타임스탬프를 파일명에 포함
         val tag = "${sessionUuid}_${name}" // 세션 UUID와 인코더 이름 합치기
@@ -1479,8 +1679,8 @@ class CustomPreviewFragment : Fragment() {
 
         return EncoderWrapper(
             name,
-            width,
-            height,
+            finalWidth,
+            finalHeight,
             RECORDER_VIDEO_BITRATE,
             args.fps,
             args.dynamicRange,
@@ -1500,6 +1700,12 @@ class CustomPreviewFragment : Fragment() {
      */
     @SuppressLint("ClickableViewAccessibility")
     private fun initializeCamera() = lifecycleScope.launch(Dispatchers.Main) {
+        // ✅ fragmentBinding이 null이면 초기화 중단 (뷰가 아직 생성되지 않음)
+        val binding = _fragmentBinding ?: run {
+            Log.w(TAG, "⚠️ initializeCamera(): fragmentBinding이 null입니다. 초기화 중단")
+            return@launch
+        }
+        
         camera = openCamera(cameraManager, args.cameraId, cameraHandler)
 
         val previewTargets = pipeline.getPreviewTargets()
@@ -1516,25 +1722,47 @@ class CustomPreviewFragment : Fragment() {
             forcePhysicalCameraId = forcePhysicalId
         )
 
-        // ★ UI/상태를 명시적으로 1x로
+        // ★ UI/상태를 명시적으로 1x로 (뷰가 유효할 때만)
         zoomLevel = 1.0f
-        fragmentBinding.zoomSlider.progress = 0
-        fragmentBinding.zoomLevelText.text = "1.00x"
+        scrollZoomRulerTo(1.0f)
+        binding.zoomLevelText.text = "1.00x"
+
+        // ✅ 카메라가 닫힌 상태인지 확인 (race condition 방지)
+        if (!::camera.isInitialized) {
+            Log.w(TAG, "⚠️ initializeCamera(): camera가 초기화되지 않음. 중단")
+            return@launch
+        }
 
         // ★ 파이프라인 요청 대신, 우리가 만든 "1x 고정" 부트스트랩 요청으로 시작
-        val bootstrap = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-            previewTargets.forEach { addTarget(it) }
-            set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-            set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-            // 필요 시 미리보기 안정화 옵션도 여기서 넣기 (기기별로 둘 중 하나)
-            // set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)
+        val bootstrap = try {
+            camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                previewTargets.forEach { addTarget(it) }
+                set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                // 필요 시 미리보기 안정화 옵션도 여기서 넣기 (기기별로 둘 중 하나)
+                // set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)
 
-            // ✅ 2) 센서에서 16:9로 센터-크롭 강제
-            apply16x9Crop(this, args.forcePhysicalId)
-        }.build()
+                // ✅ 2) 센서에서 16:9로 센터-크롭 강제
+                apply16x9Crop(this, args.forcePhysicalId)
+            }.build()
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "⚠️ initializeCamera(): CameraDevice가 이미 닫힘 - ${e.message}")
+            return@launch
+        }
 
-        session.setRepeatingRequest(bootstrap, null, cameraHandler)
+        // ✅ 세션이 닫힌 상태인지 확인
+        if (isSessionClosed(session)) {
+            Log.w(TAG, "⚠️ initializeCamera(): 세션이 닫힘. setRepeatingRequest 스킵")
+            return@launch
+        }
+
+        try {
+            session.setRepeatingRequest(bootstrap, null, cameraHandler)
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "⚠️ initializeCamera(): setRepeatingRequest 실패 - ${e.message}")
+            return@launch
+        }
 
         // ★ 그 다음 파이프라인에도 1x로 맞추도록 동기화
         setZoomLevel(1.0f)  // 내부 파이프라인(쉐이더/크롭 등)도 1x로
@@ -1578,6 +1806,11 @@ class CustomPreviewFragment : Fragment() {
         Log.d(TAG, "Recording started")
 
         withContext(Dispatchers.Main) {
+            // 🔽 네비게이션 바가 펼쳐진 상태면 접기
+            requireView().let { rootView ->
+                com.echoshot.app.utils.NavigationBarUtils.collapseNavigationBar(rootView)
+            }
+            
             // 🔽 기존 UI 업데이트
             fragmentBinding.captureButton.background =
                 ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_pressed)
@@ -1632,8 +1865,13 @@ class CustomPreviewFragment : Fragment() {
         }
 
         try {
-            pixelHandler.removeCallbacks(pixelRunnable)
-            pixelThread.quitSafely()
+            // ✅ lateinit 변수 초기화 여부 체크
+            if (::pixelHandler.isInitialized && ::pixelRunnable.isInitialized) {
+                pixelHandler.removeCallbacks(pixelRunnable)
+            }
+            if (::pixelThread.isInitialized) {
+                pixelThread.quitSafely()
+            }
 
             // 1. 녹화 시작 플래그 대기 및 첫 프레임 처리 보장
             cvRecordingStarted.block()
@@ -1672,14 +1910,18 @@ class CustomPreviewFragment : Fragment() {
             // 3. 프레임 리스너 제거
             pipeline.clearFrameListener()
 
-            // 4. UI 업데이트
-            fragmentBinding.captureButton.post {
-                fragmentBinding.captureButton.background =
-                    ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_normal)
-                // 타이머 업데이트 중지
-                stopTimerUpdate()
-                fragmentBinding.captureTimer?.visibility = View.GONE
-                fragmentBinding.captureButton.setOnTouchListener(null)
+            // 4. UI 업데이트 (뷰가 유효할 때만)
+            _fragmentBinding?.let { binding ->
+                binding.captureButton.post {
+                    _fragmentBinding?.let { b ->
+                        b.captureButton.background =
+                            ContextCompat.getDrawable(requireContext(), R.drawable.ic_shutter_normal)
+                        // 타이머 업데이트 중지
+                        stopTimerUpdate()
+                        b.captureTimer?.visibility = View.GONE
+                        b.captureButton.setOnTouchListener(null)
+                    }
+                }
             }
 
             // 5. 세션 종료 대기
@@ -1742,38 +1984,76 @@ class CustomPreviewFragment : Fragment() {
             }
 
 
-            // 10. 상태 플래그 업데이트 + 버튼 복구는 메인에서
+            // 10. 상태 플래그 업데이트 + 버튼 복구는 메인에서 (뷰가 유효할 때만)
             withContext(Dispatchers.Main) {
                 recordingStarted = false
-                // 🔥 상단 우측 버튼을 '전면 전환' 모드로 복귀
-                updateTopRightButton()
+                _fragmentBinding?.let { binding ->
+                    // 🔥 상단 우측 버튼을 '전면 전환' 모드로 복귀
+                    updateTopRightButton()
 
-                // 📸 갤러리 버튼을 원래대로 복원
-                galleryButtonOriginalDrawable?.let {
-                    fragmentBinding.galleryButton.setImageDrawable(it)
-                } ?: run {
-                    updateGalleryThumbnail()  // 원래 drawable이 없으면 썸네일 다시 설정
-                }
-                galleryButtonOriginalClickListener?.let {
-                    fragmentBinding.galleryButton.setOnClickListener(it)
-                }
-                
-                // 🎥 녹화 종료 시 렌즈 선택 버튼과 사진 모드 버튼 다시 보이기
-                fragmentBinding.lensSelector.visibility = View.VISIBLE
-                requireView().findViewById<View>(R.id.btn_mode_photo)?.visibility = View.VISIBLE
+                    // 📸 갤러리 버튼을 원래대로 복원
+                    galleryButtonOriginalDrawable?.let {
+                        binding.galleryButton.setImageDrawable(it)
+                    } ?: run {
+                        updateGalleryThumbnail()  // 원래 drawable이 없으면 썸네일 다시 설정
+                    }
+                    galleryButtonOriginalClickListener?.let {
+                        binding.galleryButton.setOnClickListener(it)
+                    }
+                    
+                    // 🎥 녹화 종료 시 렌즈 선택 버튼과 사진 모드 버튼 다시 보이기
+                    binding.lensSelector.visibility = View.VISIBLE
+                    try {
+                        requireView().findViewById<View>(R.id.btn_mode_photo)?.visibility = View.VISIBLE
+                    } catch (e: Exception) {
+                        Log.w(TAG, "뷰 접근 실패 (무시): ${e.message}")
+                    }
+                } ?: Log.w(TAG, "⚠️ fragmentBinding이 null입니다. UI 업데이트 스킵")
             }
         } finally {
-            // ✅ 항상 플래그 리셋 및 UI 복구
+            // ✅ 항상 플래그 리셋 및 UI 복구 (뷰가 유효할 때만)
             isRecording.set(false)
             isStopping.set(false)
             withContext(Dispatchers.Main) {
-                fragmentBinding.captureButton.isEnabled = true
+                _fragmentBinding?.let { binding ->
+                    binding.captureButton.isEnabled = true
+                }
             }
         }
 
-        // 11. UI 화면 복귀는 무조건 메인스레드에서 안전하게 실행
-        Handler(Looper.getMainLooper()).post {
-            navController.popBackStack()
+        // 11. 촬영 종료 후 카메라 프리뷰로 복귀
+        // ✅ 백그라운드로 나갔다가 돌아온 경우 카메라 재초기화 스킵
+        if (!isPausedForBackground) {
+            withContext(Dispatchers.Main) {
+                if (isAdded && _fragmentBinding != null) {
+                    try {
+                        // ✅ 프래그먼트 자체를 새로 로드 (Surface 재생성 포함)
+                        val action = CustomPreviewFragmentDirections.actionSelfReloadWithMode(
+                            args.cameraId,
+                            args.width,
+                            args.height,
+                            args.fps,
+                            args.dynamicRange,
+                            args.colorSpace,
+                            args.previewStabilization,
+                            args.useMediaRecorder,
+                            args.videoCodec,
+                            args.filterOn,
+                            args.transfer,
+                            args.useHardware,
+                            args.pipelineMode
+                        ).apply {
+                            setForcePhysicalId(args.forcePhysicalId)
+                        }
+                        findNavController().navigate(action)
+                        Log.d(TAG, "✅ 촬영 종료 후 카메라 프래그먼트 재로드")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "카메라 재로드 실패: ${e.message}")
+                    }
+                }
+            }
+        } else {
+            Log.d(TAG, "📌 백그라운드 정리 모드: 카메라 재초기화 스킵")
         }
 
 
@@ -1827,32 +2107,34 @@ class CustomPreviewFragment : Fragment() {
     }
 
     private fun updateTopRightButton() {
-        val btn = fragmentBinding.autoZoomButton
+        _fragmentBinding?.let { binding ->
+            val btn = binding.autoZoomButton
 
-        if (!isCurrentlyRecording()) {
-            // 🎛️ 녹화 중 아님 → 전면 전환 버튼
-            btn.setImageResource(R.drawable.ic_camera_switch) // 전면 전환 아이콘
-            btn.setColorFilter(ContextCompat.getColor(requireContext(), android.R.color.white))
-            btn.setOnClickListener { navigateToFrontPreview() }
-        } else {
-            // 🎥 녹화 중 → 오토줌 토글
-            btn.setImageResource(R.drawable.auto_zoom_btn) // 기존 오토줌 아이콘
-            btn.setColorFilter(
-                ContextCompat.getColor(
-                    requireContext(),
-                    if (autoZoom.isActive) android.R.color.holo_red_light else android.R.color.darker_gray
-                )
-            )
-            btn.setOnClickListener {
-                autoZoom.toggle()
+            if (!isCurrentlyRecording()) {
+                // 🎛️ 녹화 중 아님 → 전면 전환 버튼
+                btn.setImageResource(R.drawable.ic_camera_switch) // 전면 전환 아이콘
+                btn.setColorFilter(ContextCompat.getColor(requireContext(), android.R.color.white))
+                btn.setOnClickListener { navigateToFrontPreview() }
+            } else {
+                // 🎥 녹화 중 → 오토줌 토글
+                btn.setImageResource(R.drawable.auto_zoom_btn) // 기존 오토줌 아이콘
                 btn.setColorFilter(
                     ContextCompat.getColor(
                         requireContext(),
                         if (autoZoom.isActive) android.R.color.holo_red_light else android.R.color.darker_gray
                     )
                 )
+                btn.setOnClickListener {
+                    autoZoom.toggle()
+                    btn.setColorFilter(
+                        ContextCompat.getColor(
+                            requireContext(),
+                            if (autoZoom.isActive) android.R.color.holo_red_light else android.R.color.darker_gray
+                        )
+                    )
+                }
             }
-        }
+        } ?: Log.w(TAG, "⚠️ updateTopRightButton: fragmentBinding이 null입니다")
     }
 
     // ================== HUD 표시 ==================
@@ -2009,28 +2291,92 @@ class CustomPreviewFragment : Fragment() {
         cameraId: String,
         handler: Handler? = null
     ): CameraDevice = suspendCancellableCoroutine { cont ->
-        manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
-            override fun onOpened(device: CameraDevice) = cont.resume(device)
+        try {
+            manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+                override fun onOpened(device: CameraDevice) = cont.resume(device)
 
-            override fun onDisconnected(device: CameraDevice) {
-                Log.w(TAG, "Camera $cameraId has been disconnected")
+                override fun onDisconnected(device: CameraDevice) {
+                    Log.w(TAG, "Camera $cameraId has been disconnected")
+                    requireActivity().finish()
+                }
+
+                override fun onError(device: CameraDevice, error: Int) {
+                    val msg = when(error) {
+                        ERROR_CAMERA_DEVICE -> "Fatal (device)"
+                        ERROR_CAMERA_DISABLED -> "Device policy"
+                        ERROR_CAMERA_IN_USE -> "Camera in use"
+                        ERROR_CAMERA_SERVICE -> "Fatal (service)"
+                        ERROR_MAX_CAMERAS_IN_USE -> "Maximum cameras in use"
+                        else -> "Unknown"
+                    }
+                    val exc = RuntimeException("Camera $cameraId error: ($error) $msg")
+                    Log.e(TAG, exc.message, exc)
+                    if (cont.isActive) cont.resumeWithException(exc)
+                }
+            }, handler)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "❌ 카메라 권한이 없습니다: ${e.message}", e)
+            // 메인 스레드에서 다이얼로그 표시 후 이전 화면으로
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                showCameraPermissionDialog()
+            }
+            // 예외를 던지지 않고 coroutine을 중단 상태로 유지 (다이얼로그에서 처리)
+            // cont.resumeWithException() 호출하지 않음
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 카메라 열기 실패: ${e.message}", e)
+            if (cont.isActive) {
+                cont.resumeWithException(RuntimeException("카메라를 열 수 없습니다: ${e.message}", e))
+            }
+        }
+    }
+    
+    /**
+     * 카메라 권한이 없을 때 사용자에게 안내 다이얼로그 표시
+     */
+    private fun showCameraPermissionDialog() {
+        if (!isAdded || context == null) {
+            // Fragment가 detached된 경우 안전하게 처리
+            return
+        }
+        
+        try {
+            androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                .setTitle(R.string.permission_camera_required_title)
+                .setMessage(R.string.permission_camera_required_message)
+                .setPositiveButton(R.string.permission_go_to_settings) { _, _ ->
+                    // 앱 설정 화면으로 이동 후 이전 화면으로
+                    try {
+                        val intent = android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            android.net.Uri.fromParts("package", requireContext().packageName, null)
+                        )
+                        startActivity(intent)
+                        // 설정에서 돌아오면 다시 시도하도록 이전 화면으로
+                        findNavController().popBackStack()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "설정 화면 이동 실패: ${e.message}")
+                        requireActivity().finish()
+                    }
+                }
+                .setNegativeButton(R.string.permission_cancel) { _, _ ->
+                    // 이전 화면으로 돌아가기
+                    try {
+                        findNavController().popBackStack()
+                    } catch (e: Exception) {
+                        requireActivity().finish()
+                    }
+                }
+                .setCancelable(false)
+                .show()
+        } catch (e: Exception) {
+            Log.e(TAG, "권한 다이얼로그 표시 실패: ${e.message}")
+            // 다이얼로그 표시 실패 시 이전 화면으로
+            try {
+                findNavController().popBackStack()
+            } catch (e2: Exception) {
                 requireActivity().finish()
             }
-
-            override fun onError(device: CameraDevice, error: Int) {
-                val msg = when(error) {
-                    ERROR_CAMERA_DEVICE -> "Fatal (device)"
-                    ERROR_CAMERA_DISABLED -> "Device policy"
-                    ERROR_CAMERA_IN_USE -> "Camera in use"
-                    ERROR_CAMERA_SERVICE -> "Fatal (service)"
-                    ERROR_MAX_CAMERAS_IN_USE -> "Maximum cameras in use"
-                    else -> "Unknown"
-                }
-                val exc = RuntimeException("Camera $cameraId error: ($error) $msg")
-                Log.e(TAG, exc.message, exc)
-                if (cont.isActive) cont.resumeWithException(exc)
-            }
-        }, handler)
+        }
     }
 
     /**
@@ -2091,6 +2437,15 @@ class CustomPreviewFragment : Fragment() {
         recordingCompleteOnClose: Boolean,
         forcePhysicalCameraId: String? = null // ← 추가 (기본값 null)
     ): CameraCaptureSession = suspendCoroutine { cont ->
+        // ✅ Surface 유효성 사전 검사
+        val invalidSurfaces = targets.filter { !it.isValid }
+        if (invalidSurfaces.isNotEmpty()) {
+            val errorMsg = "❌ 일부 Surface가 유효하지 않습니다 (abandoned/invalid). 세션 생성을 중단합니다."
+            Log.e(TAG, errorMsg)
+            cont.resumeWithException(RuntimeException(errorMsg))
+            return@suspendCoroutine
+        }
+        
         val stateCallback = object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(session: CameraCaptureSession) = cont.resume(session)
 
@@ -2115,8 +2470,72 @@ class CustomPreviewFragment : Fragment() {
             }
         }
 
-        // ✅ 여기서 물리 카메라 강제 id 전달
-        setupSessionWithDynamicRangeProfile(device, targets, handler, stateCallback, forcePhysicalCameraId)
+        // ✅ Surface가 유효한 경우에만 세션 생성 시도
+        try {
+            setupSessionWithDynamicRangeProfile(device, targets, handler, stateCallback, forcePhysicalCameraId)
+        } catch (e: IllegalArgumentException) {
+            // ✅ Surface abandoned 예외 처리
+            Log.e(TAG, "❌ Surface abandoned catch in createCaptureSession: ${e.message}", e)
+            cont.resumeWithException(RuntimeException("Surface is already abandoned/invalid: ${e.message}", e))
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 예상치 못한 예외 in createCaptureSession: ${e.message}", e)
+            cont.resumeWithException(e)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // ✅ 촬영 중이면 자동으로 녹화 중지 및 저장
+        if (isCurrentlyRecording()) {
+            Log.d(TAG, "🛑 onPause() 감지: 녹화 중 자동 중지 시작")
+            isPausedForBackground = true  // ✅ 백그라운드 플래그 설정
+            cleanupJob = lifecycleScope.launch(Dispatchers.IO) {
+                stopRecording()
+            }
+        }
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        // ✅ 백그라운드에서 돌아왔고 정리 작업이 있었다면 프래그먼트 재시작
+        if (isPausedForBackground) {
+            Log.d(TAG, "⏳ onResume(): 백그라운드 정리 후 재진입 감지, 프래그먼트 재시작 필요")
+            lifecycleScope.launch(Dispatchers.Main) {
+                // 정리 작업 완료 대기
+                cleanupJob?.join()
+                Log.d(TAG, "✅ onResume(): 정리 작업 완료, 프래그먼트 재시작")
+                cleanupJob = null
+                isPausedForBackground = false
+                
+                // 🔄 프래그먼트를 완전히 재시작하여 새 인코더/Surface 생성
+                if (isAdded) {
+                    try {
+                        // 현재 프래그먼트를 pop하고 같은 설정으로 다시 네비게이션
+                        val action = CustomPreviewFragmentDirections
+                            .actionSelfReloadWithMode(
+                                args.cameraId,
+                                args.width,
+                                args.height,
+                                args.fps,
+                                args.dynamicRange,
+                                args.colorSpace,
+                                args.previewStabilization,
+                                args.useMediaRecorder,
+                                args.videoCodec,
+                                args.filterOn,
+                                args.transfer,
+                                args.useHardware,
+                                args.pipelineMode
+                            ).apply {
+                                setForcePhysicalId(args.forcePhysicalId)
+                            }
+                        findNavController().navigate(action)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "프래그먼트 재시작 실패: ${e.message}", e)
+                    }
+                }
+            }
+        }
     }
 
     override fun onStop() {
@@ -2139,8 +2558,29 @@ class CustomPreviewFragment : Fragment() {
                 pipeline.cleanup()
             }
             cameraThread.quitSafely()
-            encoderSurface.release()
-            originalencoderSurface.release()
+            
+            // ✅ Surface release 시 안전하게 처리 (by lazy는 isInitialized 사용 불가)
+            try {
+                if (encoderSurface.isValid) {
+                    encoderSurface.release()
+                    Log.d(TAG, "✅ encoderSurface release 완료")
+                } else {
+                    Log.d(TAG, "⚠️ encoderSurface가 이미 해제되었거나 유효하지 않음")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ encoderSurface release 중 예외 (무시)", e)
+            }
+            
+            try {
+                if (originalencoderSurface.isValid) {
+                    originalencoderSurface.release()
+                    Log.d(TAG, "✅ originalencoderSurface release 완료")
+                } else {
+                    Log.d(TAG, "⚠️ originalencoderSurface가 이미 해제되었거나 유효하지 않음")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ originalencoderSurface release 중 예외 (무시)", e)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error during onDestroy cleanup", e)
         }
@@ -2155,9 +2595,8 @@ class CustomPreviewFragment : Fragment() {
             pixelThread.quitSafely()
         }
         // 2) PoseDetector 해제
-        if (::poseDetector.isInitialized) {
-            poseDetector.close()
-        }
+        poseDetector?.close()
+        poseDetector = null
         // 3) zoomAnimator 취소
         zoomAnimator?.cancel()
         zoomAnimator = null
@@ -2220,6 +2659,11 @@ class CustomPreviewFragment : Fragment() {
     }
 
     private fun updateGalleryThumbnail() {
+        val binding = _fragmentBinding ?: run {
+            Log.w(TAG, "⚠️ updateGalleryThumbnail: fragmentBinding이 null입니다")
+            return
+        }
+        
         val dir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
             "EchoShot"
@@ -2230,9 +2674,11 @@ class CustomPreviewFragment : Fragment() {
         val videoFiles = dir.listFiles { f -> f.extension.equals("mp4", true) }
             ?: run {
                 Log.d("ThumbDebug", "listFiles() == null")
-                fragmentBinding.galleryButton.post {
-                    fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
+                binding.galleryButton.post {
+                    _fragmentBinding?.galleryButton?.let { btn ->
+                        btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                        btn.setImageResource(R.drawable.ic_photo_gallery)
+                    }
                 }
                 return
             }
@@ -2244,9 +2690,11 @@ class CustomPreviewFragment : Fragment() {
             .firstOrNull()
             ?: run {
                 Log.d("ThumbDebug", "no latest mp4 found (size=${videoFiles.size})")
-                fragmentBinding.galleryButton.post {
-                    fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
+                binding.galleryButton.post {
+                    _fragmentBinding?.galleryButton?.let { btn ->
+                        btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                        btn.setImageResource(R.drawable.ic_photo_gallery)
+                    }
                 }
                 return
             }
@@ -2266,15 +2714,17 @@ class CustomPreviewFragment : Fragment() {
             null
         }
 
-        fragmentBinding.galleryButton.post {
-            if (thumb == null) {
-                Log.d("ThumbDebug", "썸네일이 null이라 기본 아이콘 표시")
-                fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_INSIDE
-                fragmentBinding.galleryButton.setImageResource(R.drawable.ic_photo_gallery)
-            } else {
-                Log.d("ThumbDebug", "썸네일 생성 성공 → 버튼에 적용")
-                fragmentBinding.galleryButton.scaleType = ImageView.ScaleType.CENTER_CROP
-                fragmentBinding.galleryButton.setImageBitmap(thumb)
+        binding.galleryButton.post {
+            _fragmentBinding?.galleryButton?.let { btn ->
+                if (thumb == null) {
+                    Log.d("ThumbDebug", "썸네일이 null이라 기본 아이콘 표시")
+                    btn.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                    btn.setImageResource(R.drawable.ic_photo_gallery)
+                } else {
+                    Log.d("ThumbDebug", "썸네일 생성 성공 → 버튼에 적용")
+                    btn.scaleType = ImageView.ScaleType.CENTER_CROP
+                    btn.setImageBitmap(thumb)
+                }
             }
         }
     }
@@ -2292,12 +2742,15 @@ class CustomPreviewFragment : Fragment() {
 
                 lifecycleScope.launch(Dispatchers.IO) {
                     try {
+                        // ✅ PhotoFragment와 동일한 파일명 형식 사용
                         val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.KOREA)
                             .format(System.currentTimeMillis())
+                        
+                        // ✅ PhotoFragment와 동일한 방식: MediaStore에 직접 저장
                         val contentValues = ContentValues().apply {
                             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
                             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                            put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/EchoShot")
+                            put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/EchoShot")  // PhotoFragment와 동일 (슬래시 없음)
                         }
 
                         val uri = requireContext().contentResolver.insert(
@@ -2310,13 +2763,8 @@ class CustomPreviewFragment : Fragment() {
                                 val ok = bmp.compress(Bitmap.CompressFormat.JPEG, 95, os)
                                 if (!ok) throw RuntimeException("JPEG 압축 실패")
                             }
-                            MediaScannerConnection.scanFile(
-                                requireContext(),
-                                arrayOf(it.toString()),
-                                arrayOf("image/jpeg"),
-                                null
-                            )
-                        }
+                            Log.d(TAG, "✅ 사진 저장 완료: $name")
+                        } ?: throw RuntimeException("MediaStore insert 실패")
                     } catch (e: Exception) {
                         Log.e(TAG, "사진 저장 실패", e)
                     }
@@ -2462,6 +2910,40 @@ class CustomPreviewFragment : Fragment() {
         }
 
         findNavController().navigate(action)
+    }
+    
+    /**
+     * 파이프라인 초기화 - 최대 3회 재시도 후 실패하면 크래시
+     * Surface 타이밍 이슈 대응 (저사양 기기에서 Surface 준비가 늦을 수 있음)
+     */
+    private fun initPipelineWithRetry(surface: Surface) {
+        val maxRetries = 3
+        var lastException: Exception? = null
+        
+        for (attempt in 1..maxRetries) {
+            try {
+                pipeline.createResources(surface)
+                initializeCamera()
+                Log.d(TAG, "✅ pipeline.createResources() 성공 (시도 $attempt/$maxRetries)")
+                return  // 성공 시 즉시 리턴
+            } catch (e: Exception) {
+                lastException = e
+                Log.w(TAG, "⚠️ pipeline.createResources() 실패 (시도 $attempt/$maxRetries): ${e.message}")
+                
+                if (attempt < maxRetries) {
+                    // Surface가 아직 준비 안됐을 수 있으므로 잠시 대기 후 재시도
+                    try {
+                        Thread.sleep(100L * attempt)  // 100ms, 200ms, 300ms 점진적 대기
+                    } catch (_: InterruptedException) {
+                        break
+                    }
+                }
+            }
+        }
+        
+        // 모든 재시도 실패 → 크래시 (Play Console에 찍힘)
+        Log.e(TAG, "❌ pipeline.createResources() 최종 실패 ($maxRetries 회 시도) - 크래시 발생")
+        throw lastException ?: RuntimeException("Pipeline 초기화 실패")
     }
 
 

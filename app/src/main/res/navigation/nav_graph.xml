@@ -28,6 +28,18 @@
         android:label="Permissions" >
 
         <action
+            android:id="@+id/action_permissions_to_home"
+            app:destination="@id/home_fragment"
+            app:popUpTo="@id/permissions_fragment"
+            app:popUpToInclusive="true" />
+
+        <action
+            android:id="@+id/action_permissions_to_custom_preview"
+            app:destination="@id/custom_preview_fragment"
+            app:popUpTo="@id/permissions_fragment"
+            app:popUpToInclusive="true" />
+
+        <action
             android:id="@+id/action_permissions_to_selector"
             app:destination="@id/launcherFragment"
             app:popUpTo="@id/permissions_fragment"
@@ -66,6 +78,14 @@
         <action
             android:id="@+id/action_homeFragment_to_profileFragment"
             app:destination="@id/profile_fragment" />
+
+        <action
+            android:id="@+id/action_homeFragment_to_videoUploadFragment"
+            app:destination="@id/video_upload_fragment" />
+
+        <action
+            android:id="@+id/action_homeFragment_to_fancamEditFragment"
+            app:destination="@id/fancam_edit_fragment" />
     </fragment>
 
     <fragment
@@ -85,6 +105,14 @@
         <action
             android:id="@+id/action_profileFragment_to_customPreviewFragment"
             app:destination="@id/custom_preview_fragment" />
+
+        <action
+            android:id="@+id/action_profileFragment_to_videoUploadFragment"
+            app:destination="@id/video_upload_fragment" />
+
+        <action
+            android:id="@+id/action_profileFragment_to_fancamEditFragment"
+            app:destination="@id/fancam_edit_fragment" />
     </fragment>
 
     <fragment
@@ -605,7 +633,9 @@
             app:launchSingleTop="true" />
         <action
             android:id="@+id/action_self_reload_with_mode"
-            app:destination="@id/custom_preview_fragment" />
+            app:destination="@id/custom_preview_fragment"
+            app:popUpTo="@id/custom_preview_fragment"
+            app:popUpToInclusive="true" />
         <action
             android:id="@+id/action_customPreviewFragment_to_galleryFragment"
             app:destination="@id/gallery_fragment" />
@@ -619,6 +649,14 @@
         <action
             android:id="@+id/action_customPreviewFragment_to_profileFragment"
             app:destination="@id/profile_fragment" />
+
+        <action
+            android:id="@+id/action_customPreviewFragment_to_videoUploadFragment"
+            app:destination="@id/video_upload_fragment" />
+
+        <action
+            android:id="@+id/action_customPreviewFragment_to_fancamEditFragment"
+            app:destination="@id/fancam_edit_fragment" />
     </fragment>
 
     <fragment
@@ -649,6 +687,9 @@
         <action
             android:id="@+id/action_customFrontPreview_to_customPreview"
             app:destination="@id/custom_preview_fragment" />
+        <action
+            android:id="@+id/action_self_reload_front"
+            app:destination="@id/custom_front_preview_fragment" />
         <action
             android:id="@+id/action_customFrontPreviewFragment_to_galleryFragment"
             app:destination="@id/gallery_fragment" />
@@ -749,6 +790,10 @@
         <action
             android:id="@+id/action_photoFrontFragment_to_profileFragment"
             app:destination="@id/profile_fragment" />
+        <!-- ✅ 전면 사진 → 갤러리 액션 추가 -->
+        <action
+            android:id="@+id/action_photoFrontFragment_to_galleryFragment"
+            app:destination="@id/gallery_fragment" />
     </fragment>
 
     <fragment
@@ -793,7 +838,128 @@
         <action
             android:id="@+id/action_galleryFragment_to_profileFragment"
             app:destination="@id/profile_fragment" />
+
+        <action
+            android:id="@+id/action_galleryFragment_to_videoUploadFragment"
+            app:destination="@id/video_upload_fragment" />
+
+        <action
+            android:id="@+id/action_galleryFragment_to_fancamEditFragment"
+            app:destination="@id/fancam_edit_fragment" />
     </fragment>
+
+    <fragment
+        android:id="@+id/video_upload_fragment"
+        android:name="com.echoshot.app.fragments.VideoUploadFragment"
+        android:label="Video Upload"
+        tools:layout="@layout/fragment_video_upload">
+
+        <action
+            android:id="@+id/action_videoUploadFragment_to_homeFragment"
+            app:destination="@id/home_fragment" />
+
+        <action
+            android:id="@+id/action_videoUploadFragment_to_galleryFragment"
+            app:destination="@id/gallery_fragment">
+            <argument android:name="camera_id" app:argType="string" app:nullable="false"/>
+            <argument android:name="width" app:argType="integer"/>
+            <argument android:name="height" app:argType="integer"/>
+            <argument android:name="fps" app:argType="integer"/>
+            <argument android:name="dynamicRange" app:argType="long"/>
+            <argument android:name="colorSpace" app:argType="integer"/>
+            <argument android:name="previewStabilization" app:argType="boolean"/>
+            <argument android:name="useMediaRecorder" app:argType="boolean"/>
+            <argument android:name="videoCodec" app:argType="integer"/>
+            <argument android:name="filterOn" app:argType="boolean"/>
+            <argument android:name="transfer" app:argType="integer"/>
+            <argument android:name="useHardware" app:argType="boolean"/>
+            <argument android:name="pipelineMode" app:argType="string" app:nullable="false"/>
+            <argument android:name="forcePhysicalId" app:argType="string" app:nullable="true" android:defaultValue="@null" />
+            <argument android:name="startBasic" app:argType="boolean" android:defaultValue="true"/>
+        </action>
+
+        <action
+            android:id="@+id/action_videoUploadFragment_to_customPreviewFragment"
+            app:destination="@id/custom_preview_fragment">
+            <argument android:name="camera_id" app:argType="string" app:nullable="false"/>
+            <argument android:name="width" app:argType="integer"/>
+            <argument android:name="height" app:argType="integer"/>
+            <argument android:name="fps" app:argType="integer"/>
+            <argument android:name="dynamicRange" app:argType="long"/>
+            <argument android:name="colorSpace" app:argType="integer"/>
+            <argument android:name="previewStabilization" app:argType="boolean"/>
+            <argument android:name="useMediaRecorder" app:argType="boolean"/>
+            <argument android:name="videoCodec" app:argType="integer"/>
+            <argument android:name="filterOn" app:argType="boolean"/>
+            <argument android:name="transfer" app:argType="integer"/>
+            <argument android:name="useHardware" app:argType="boolean"/>
+            <argument android:name="pipelineMode" app:argType="string" app:nullable="false"/>
+            <argument android:name="forcePhysicalId" app:argType="string" app:nullable="true" android:defaultValue="@null" />
+        </action>
+
+        <action
+            android:id="@+id/action_videoUploadFragment_to_profileFragment"
+            app:destination="@id/profile_fragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fancam_edit_fragment"
+        android:name="com.echoshot.app.fragments.FancamEditFragment"
+        android:label="FanCam Edit"
+        tools:layout="@layout/fragment_fancam_edit">
+
+        <action
+            android:id="@+id/action_fancamEditFragment_to_homeFragment"
+            app:destination="@id/home_fragment" />
+
+        <action
+            android:id="@+id/action_fancamEditFragment_to_galleryFragment"
+            app:destination="@id/gallery_fragment">
+            <argument android:name="camera_id" app:argType="string" app:nullable="false"/>
+            <argument android:name="width" app:argType="integer"/>
+            <argument android:name="height" app:argType="integer"/>
+            <argument android:name="fps" app:argType="integer"/>
+            <argument android:name="dynamicRange" app:argType="long"/>
+            <argument android:name="colorSpace" app:argType="integer"/>
+            <argument android:name="previewStabilization" app:argType="boolean"/>
+            <argument android:name="useMediaRecorder" app:argType="boolean"/>
+            <argument android:name="videoCodec" app:argType="integer"/>
+            <argument android:name="filterOn" app:argType="boolean"/>
+            <argument android:name="transfer" app:argType="integer"/>
+            <argument android:name="useHardware" app:argType="boolean"/>
+            <argument android:name="pipelineMode" app:argType="string" app:nullable="false"/>
+            <argument android:name="forcePhysicalId" app:argType="string" app:nullable="true" android:defaultValue="@null" />
+            <argument android:name="startBasic" app:argType="boolean" android:defaultValue="true"/>
+        </action>
+
+        <action
+            android:id="@+id/action_fancamEditFragment_to_customPreviewFragment"
+            app:destination="@id/custom_preview_fragment">
+            <argument android:name="camera_id" app:argType="string" app:nullable="false"/>
+            <argument android:name="width" app:argType="integer"/>
+            <argument android:name="height" app:argType="integer"/>
+            <argument android:name="fps" app:argType="integer"/>
+            <argument android:name="dynamicRange" app:argType="long"/>
+            <argument android:name="colorSpace" app:argType="integer"/>
+            <argument android:name="previewStabilization" app:argType="boolean"/>
+            <argument android:name="useMediaRecorder" app:argType="boolean"/>
+            <argument android:name="videoCodec" app:argType="integer"/>
+            <argument android:name="filterOn" app:argType="boolean"/>
+            <argument android:name="transfer" app:argType="integer"/>
+            <argument android:name="useHardware" app:argType="boolean"/>
+            <argument android:name="pipelineMode" app:argType="string" app:nullable="false"/>
+            <argument android:name="forcePhysicalId" app:argType="string" app:nullable="true" android:defaultValue="@null" />
+        </action>
+
+        <action
+            android:id="@+id/action_fancamEditFragment_to_profileFragment"
+            app:destination="@id/profile_fragment" />
+
+        <action
+            android:id="@+id/action_fancamEditFragment_to_previewPlayerFragment"
+            app:destination="@id/previewPlayerFragment" />
+    </fragment>
+
     <fragment
         android:id="@+id/previewPlayerFragment"
         android:name="com.echoshot.app.fragments.PreviewPlayerFragment"

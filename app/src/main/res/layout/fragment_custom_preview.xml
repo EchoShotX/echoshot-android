@@ -131,23 +131,15 @@
             android:focusable="true" />
     </LinearLayout>
 
-    <!-- 🎯 줌 슬라이더: 버튼 위 -->
-    <!-- 줌 슬라이더 -->
-    <SeekBar
-        android:id="@+id/zoom_slider"
+    <!-- 🎯 줌 룰러: 버튼 위 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/zoom_ruler"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="100dp"
         android:layout_gravity="bottom|center"
-        android:layout_marginBottom="162dp"
-        android:layout_marginStart="32dp"
-        android:layout_marginEnd="32dp"
-        android:max="1000"
-        android:progress="0"
-        android:splitTrack="false"
-        android:progressDrawable="@drawable/zoom_seekbar_track"
-        android:thumb="@drawable/zoom_seekbar_thumb"
-        android:thumbTintMode="src_in"
-        android:thumbTint="@android:color/white" />
+        android:layout_marginBottom="130dp"
+        android:clipToPadding="false"
+        android:overScrollMode="never" />
 
     <!-- ⬇️ 모드 스위치 바 (사진/동영상) — 줌 슬라이더 바로 아래 -->
     <LinearLayout
@@ -220,7 +212,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center"
-        android:layout_marginBottom="187dp"
+        android:layout_marginBottom="195dp"
         android:text="1.0x"
         android:textSize="16sp"
         android:textColor="@android:color/white"
@@ -233,7 +225,7 @@
         android:layout_width="wrap_content"
         android:layout_height="40dp"
         android:layout_gravity="bottom|center"
-        android:layout_marginBottom="187dp"
+        android:layout_marginBottom="195dp"
         android:background="@drawable/lens_selector_bg"
         android:paddingStart="8dp"
         android:paddingEnd="8dp"
