@@ -309,6 +309,10 @@ class CustomFrontPreviewFragment : Fragment() {
                     }
                 findNavController().navigate(action)
             },
+            onArchiveClick = {
+                val action = CustomFrontPreviewFragmentDirections.actionCustomFrontPreviewFragmentToFancamEditFragment()
+                findNavController().navigate(action)
+            },
             onProfileClick = {
                 // 배포모드일 때는 프로필로 이동하지 않음
                 if (DeploymentModeManager.isDeploymentMode()) {

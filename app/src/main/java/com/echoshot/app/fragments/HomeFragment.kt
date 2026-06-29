@@ -69,11 +69,6 @@ class HomeFragment : Fragment() {
                 navigateToCamera()
             },
             onArchiveClick = {
-                // 배포모드일 때는 업로드 페이지로 이동하지 않음
-                if (DeploymentModeManager.isDeploymentMode()) {
-                    return@setupBottomNavigationBar
-                }
-                // 홈에서 업로드 페이지로 이동
                 val action = HomeFragmentDirections.actionHomeFragmentToFancamEditFragment()
                 findNavController().navigate(action)
             },
@@ -116,14 +111,15 @@ class HomeFragment : Fragment() {
         
         // 로그인 후 프로필로 이동하라는 요청이 있는지 확인
         val navigateTo = arguments?.getString("navigateTo")
-        if (navigateTo == "profile") {
-            // UI 초기화 후 안전하게 네비게이션
+        if (navigateTo == "profile" && !DeploymentModeManager.isDeploymentMode()) {
+            // 배포모드가 아닐 때만 프로필로 이동
             view.post {
                 val action = HomeFragmentDirections.actionHomeFragmentToProfileFragment()
                 findNavController().navigate(action)
             }
-            arguments?.remove("navigateTo")
         }
+        arguments?.remove("navigateTo")
+
         
         // 실시간 알림 수신 대기
         // 1. 이미 있는 알림 확인 (Fragment 시작 시)

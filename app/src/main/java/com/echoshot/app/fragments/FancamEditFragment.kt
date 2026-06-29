@@ -102,28 +102,21 @@ class FancamEditFragment : Fragment() {
         editProgressText = view.findViewById(R.id.editProgressText)
         editHistoryRecyclerView = view.findViewById(R.id.editHistoryRecyclerView)
 
-        // 네비게이션 바 설정
+        // 상단 헤더 홈 버튼 설정 (하단 네비게이션 편입에 따른 직접 연결)
+        val btnHeaderHome = view.findViewById<ImageView>(R.id.btnHeaderHome)
+        btnHeaderHome?.setOnClickListener {
+            val action = FancamEditFragmentDirections.actionFancamEditFragmentToHomeFragment()
+            findNavController().navigate(action)
+        }
+
+        // 네비게이션 바 설정 (3단 대칭 구성으로 변경됨)
         setupBottomNavigationBar(
-            currentPage = "upload",
-            onHomeClick = {
-                val action = FancamEditFragmentDirections.actionFancamEditFragmentToHomeFragment()
-                findNavController().navigate(action)
-            },
-            onGalleryClick = {
-                navigateToGallery()
-            },
-            onCameraClick = {
-                navigateToCamera()
-            },
-            onArchiveClick = {
-                // 현재 페이지이므로 아무 동작 없음
-            },
-            onProfileClick = {
-                if (!com.echoshot.app.utils.DeploymentModeManager.isDeploymentMode()) {
-                    val action = FancamEditFragmentDirections.actionFancamEditFragmentToProfileFragment()
-                    findNavController().navigate(action)
-                }
-            }
+            currentPage = "upload", // upload = nav_archive = 팬캠 편집
+            onHomeClick = null,     // 홈은 상단 버튼으로 이동
+            onGalleryClick = { navigateToGallery() },
+            onCameraClick = { navigateToCamera() },
+            onArchiveClick = { /* 현재 위치 (이동 안함) */ },
+            onProfileClick = null   // 프로필 제거됨
         )
 
         // 동영상 편집 시작 버튼 클릭
@@ -218,16 +211,38 @@ class FancamEditFragment : Fragment() {
                 retriever.release()
 
                 withContext(Dispatchers.Main) {
-                    val root = layoutInflater.inflate(R.layout.dialog_locked_thumbnail, null)
+                    val root = layoutInflater.inflate(R.layout.dialog_fancam_edit_thumbnail, null)
 
                     val iv = root.findViewById<ImageView>(R.id.lockedThumbnail)
+                    val overlay = root.findViewById<com.echoshot.app.mp4detact.RectOverlayView>(R.id.lockedOverlay)
+                    val btnSmaller = root.findViewById<Button>(R.id.btnSmaller)
+                    val btnBigger = root.findViewById<Button>(R.id.btnBigger)
+                    val btnInfo = root.findViewById<ImageView>(R.id.btnInfo)
                     val btnStart = root.findViewById<Button>(R.id.startButton)
                     val toggleCrop = root.findViewById<MaterialButtonToggleGroup>(R.id.toggleCropMode)
                     val toggleTrack = root.findViewById<MaterialButtonToggleGroup>(R.id.toggleTrackMode)
                     val toggleResolution = root.findViewById<MaterialButtonToggleGroup>(R.id.toggleResolution)
 
+                    btnSmaller?.setOnClickListener { overlay?.nudgeScale(0.9f) }
+                    btnBigger?.setOnClickListener { overlay?.nudgeScale(1.1f) }
+                    
+                    btnInfo?.setOnClickListener {
+                        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                            .setMessage(R.string.fancam_high_res_warning)
+                            .setPositiveButton(android.R.string.ok, null)
+                            .show()
+                    }
+
                     // 썸네일 설정
-                    thumbnail?.let { iv.setImageBitmap(it) }
+                    thumbnail?.let { bmp ->
+                        iv.setImageBitmap(bmp)
+                        iv.viewTreeObserver.addOnGlobalLayoutListener(object: android.view.ViewTreeObserver.OnGlobalLayoutListener{
+                            override fun onGlobalLayout() {
+                                iv.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                                overlay?.ensureDefault() // 기본 박스 표시
+                            }
+                        })
+                    }
 
                     // 해상도 선택 기본값
                     if (toggleResolution.checkedButtonId == View.NO_ID) {
@@ -267,6 +282,20 @@ class FancamEditFragment : Fragment() {
                         .apply { window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)) }
 
                     btnStart.setOnClickListener {
+                        var targetRect: android.graphics.RectF? = null
+                        if (overlay != null && thumbnail != null) {
+                            val rView = overlay.getRectViewSpace()
+                            val rBmp = mapViewToBitmap(iv, rView)
+                            if (rBmp != null) {
+                                targetRect = android.graphics.RectF(
+                                    rBmp.left / thumbnail.width,
+                                    rBmp.top / thumbnail.height,
+                                    rBmp.right / thumbnail.width,
+                                    rBmp.bottom / thumbnail.height
+                                )
+                            }
+                        }
+                        
                         dialog.dismiss()
 
                         val paddingFactor = when (toggleCrop.checkedButtonId) {
@@ -285,7 +314,8 @@ class FancamEditFragment : Fragment() {
                             paddingFactor = paddingFactor,
                             outputResolution = getOutputResolution(),
                             outputResolutionStr = getOutputResolutionStr(),
-                            fileName = getFileName(videoUri) ?: "video.mp4"
+                            fileName = getFileName(videoUri) ?: "video.mp4",
+                            targetRect = targetRect
                         )
                     }
 
@@ -321,7 +351,8 @@ class FancamEditFragment : Fragment() {
         paddingFactor: Float,
         outputResolution: OutputResolution,
         outputResolutionStr: String,
-        fileName: String
+        fileName: String,
+        targetRect: android.graphics.RectF?
     ) {
         val ctx = requireContext()
         val sessionUuid = UUID.randomUUID().toString()
@@ -364,22 +395,28 @@ class FancamEditFragment : Fragment() {
         // 메모리 리스트에도 추가
         thumbnailCache[sessionUuid] = thumbnail
         historyEntries.add(0, entry)
-        editHistoryAdapter?.notifyItemInserted(0)
+        editHistoryAdapter?.notifyDataSetChanged()
 
         // 프로그레스 다이얼로그 표시
         showBlockingProgress(etaSec)
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                // [NEW] 외부 영상 정규화 (Rotation을 물리 픽셀로 변환)
+                Log.d(TAG, "[FANCAM] 외부 영상 정규화 검사/시작")
+                val normalizedUri = com.echoshot.app.utils.VideoNormalizer.normalizeVideoIfNeeded(ctx, videoUri)
+                Log.d(TAG, "[FANCAM] 정규화 완료. 대상 URI: $normalizedUri")
+
                 // 1) PoseLogOrchestrator 호출 (trackingUri=null, tsUri=null)
                 Log.d(TAG, "[FANCAM] 파이프라인 시작: session=$sessionUuid")
                 val result = PoseLogOrchestrator.makePoseLogsAndMerge(
                     ctx = ctx,
                     sessionUuid = sessionUuid,
-                    videoUriForDetect = videoUri,
+                    videoUriForDetect = normalizedUri,
                     trackingUri = null,
                     tsUri = null,
                     filesDir = ctx.filesDir,
+                    targetRect = targetRect,
                     onStage = { stage, note -> Log.d(TAG, "[FANCAM] stage=$stage note=$note") },
                     onProgress = { frameIdx, ptsMs ->
                         if (frameIdx % 100 == 0) Log.d(TAG, "[FANCAM] frame=$frameIdx pts=$ptsMs")
@@ -391,12 +428,13 @@ class FancamEditFragment : Fragment() {
                 val croppedUri = VideoPipeline.processSessionFromLog(
                     context = ctx,
                     sessionId = sessionUuid,
-                    srcVideoUri = videoUri,
+                    srcVideoUri = normalizedUri,
                     fps = fps,
                     paddingFactor = paddingFactor,
                     logFile = result.mergedLocalFile,
                     format = LogFormat.MERGED_JSONL,
-                    outputResolution = outputResolution
+                    outputResolution = outputResolution,
+                    outputPrefix = "add"  // 확장 갤러리에 잘못 표시되지 않도록 별도 prefix 사용
                 )
 
                 // 결과에 따라 영구 저장소 업데이트
@@ -712,8 +750,11 @@ class FancamEditFragment : Fragment() {
                         val ctx = requireContext()
                         FancamHistoryManager.deleteEntry(ctx, entry.id)
                         thumbnailCache.remove(entry.id)
-                        historyEntries.removeAt(holder.bindingAdapterPosition)
-                        notifyItemRemoved(holder.bindingAdapterPosition)
+                        val pos = holder.bindingAdapterPosition
+                        if (pos != androidx.recyclerview.widget.RecyclerView.NO_POSITION && pos < historyEntries.size) {
+                            historyEntries.removeAt(pos)
+                        }
+                        notifyDataSetChanged()
                     }
                     .setNegativeButton(getString(R.string.close_button), null)
                     .show()
@@ -752,5 +793,21 @@ class FancamEditFragment : Fragment() {
                 null
             }
         }
+    }
+
+    /** ImageView(fitCenter)상의 뷰좌표 RectF → 비트맵 좌표 RectF */
+    private fun mapViewToBitmap(iv: ImageView, rView: android.graphics.RectF): android.graphics.RectF? {
+        val d = iv.drawable ?: return null
+        val bmW = d.intrinsicWidth.toFloat()
+        val bmH = d.intrinsicHeight.toFloat()
+        val m = android.graphics.Matrix()
+        if (!iv.imageMatrix.invert(m)) return null
+        val pts = floatArrayOf(rView.left, rView.top, rView.right, rView.bottom)
+        m.mapPoints(pts)
+        val left = pts[0].coerceIn(0f, bmW)
+        val top = pts[1].coerceIn(0f, bmH)
+        val right = pts[2].coerceIn(0f, bmW)
+        val bottom = pts[3].coerceIn(0f, bmH)
+        return android.graphics.RectF(left, top, right, bottom)
     }
 }

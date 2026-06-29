@@ -102,4 +102,5 @@
     <string name="fancam_select_video">Chọn Video để chỉnh sửa</string>
     <string name="fancam_processing">Đang xử lý…</string>
     <string name="fancam_history_title">Lịch sử chỉnh sửa</string>
+    <string name="fancam_high_res_warning">Tùy thuộc vào cấu hình thiết bị, có thể xuất hiện nhiễu khi chọn độ phân giải cao.</string>
 </resources>

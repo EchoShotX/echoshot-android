@@ -886,11 +886,6 @@ class CustomPreviewFragment : Fragment() {
                 findNavController().navigate(action)
             },
             onArchiveClick = {
-                // 배포모드일 때는 업로드 페이지로 이동하지 않음
-                if (DeploymentModeManager.isDeploymentMode()) {
-                    return@setupBottomNavigationBar
-                }
-                // 카메라에서 업로드 페이지로 이동
                 val action = CustomPreviewFragmentDirections.actionCustomPreviewFragmentToFancamEditFragment()
                 findNavController().navigate(action)
             },
@@ -2395,7 +2390,18 @@ class CustomPreviewFragment : Fragment() {
                 OutputConfiguration(surface).apply {
                     // T(33)+ : HDR 프로파일 지정
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        setDynamicRangeProfile(args.dynamicRange)
+                        val drProfiles = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES)
+                        val supportedProfiles = drProfiles?.supportedProfiles ?: emptySet()
+                        
+                        Log.i(TAG, "🔍 Surface Profile Check: Target=${args.dynamicRange}, Supported=$supportedProfiles")
+                        
+                        // 요청된 프로필이 실제로 지원되는 경우에만 설정, 아니면 STANDARD로 폴백
+                        if (supportedProfiles.contains(args.dynamicRange)) {
+                            setDynamicRangeProfile(args.dynamicRange)
+                        } else {
+                            Log.w(TAG, "⚠️ HDR Profile ${args.dynamicRange} is not supported by this camera. Falling back to STANDARD.")
+                            setDynamicRangeProfile(DynamicRangeProfiles.STANDARD)
+                        }
                     }
                     // 물리 카메라 라우팅 (null이면 미설정)
                     if (!forcePhysicalCameraId.isNullOrEmpty()) {

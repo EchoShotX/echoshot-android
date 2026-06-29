@@ -48,6 +48,7 @@ object PoseLogOrchestrator {
         trackingUri: Uri?,
         tsUri: Uri?,
         filesDir: File,
+        targetRect: android.graphics.RectF? = null,
         onStage: (Stage, String) -> Unit = { _, _ -> },
         onProgress: (frameIdx: Int, ptsMs: Long) -> Unit = { _, _ -> }
     ): ResultPaths = withContext(Dispatchers.IO) {
@@ -72,6 +73,7 @@ object PoseLogOrchestrator {
             trackingUri = trackingUri,
             tsUri = tsUri,
             filesDir = filesDir,
+            targetRect = targetRect,
             onStage = onStage,
             onProgress = onProgress
         )
@@ -89,6 +91,7 @@ object PoseLogOrchestrator {
         trackingUri: Uri?,
         tsUri: Uri?,
         filesDir: File,
+        targetRect: android.graphics.RectF? = null,
         onStage: (Stage, String) -> Unit = { _, _ -> },
         onProgress: (frameIdx: Int, ptsMs: Long) -> Unit = { _, _ -> }
     ): ResultPaths = withContext(Dispatchers.IO) {
@@ -121,11 +124,18 @@ object PoseLogOrchestrator {
         }
 
         // 3) 병합 → merged.jsonl (local)
-        // pose_log + processed(zoom 보간됨) → merged
         coroutineContext.ensureActive()
         onStage(Stage.MERGING, "merge pose logs with zoom-interpolated data")
         val mergedLocal = File(filesDir, "merged_pose_${sessionUuid}.jsonl")
-        runPythonPoseMerge(poseLogLocal.absolutePath, processedJson.absolutePath, mergedLocal.absolutePath)
+        
+        if (targetRect != null) {
+            // 팬캠 모드: 사용자 선택 ROI 추적
+            runPythonFancamPoseMerge(poseLogLocal.absolutePath, targetRect, mergedLocal.absolutePath)
+        } else {
+            // 일반 모드: make_log_pipeline 처리된 json 이용
+            runPythonPoseMerge(poseLogLocal.absolutePath, processedJson.absolutePath, mergedLocal.absolutePath)
+        }
+        
         Log.d(TAG, "[merge] mergedLocal=${mergedLocal.absolutePath} size=${mergedLocal.length()}")
 
         // 병합본을 SAF로 복사
@@ -208,6 +218,21 @@ object PoseLogOrchestrator {
         val py = Python.getInstance()
         val mod = py.getModule("merge_pose_logs")
         mod.callAttr("merge_pose_logs", poseLogPath, trackingPath, outPath)
+    }
+
+    /** Chaquopy로 Fancam 전용 Python pipeline 호출 (사용자 지정 ROI 기반) */
+    private fun runPythonFancamPoseMerge(poseLogPath: String, targetRect: android.graphics.RectF, outPath: String) {
+        val py = Python.getInstance()
+        val mod = py.getModule("fancam_pose_pipeline")
+        mod.callAttr(
+            "process_fancam_video", 
+            poseLogPath, 
+            outPath,
+            targetRect.left, 
+            targetRect.top, 
+            targetRect.right, 
+            targetRect.bottom
+        )
     }
 
     /** Content Uri → 내부 파일 복사 */

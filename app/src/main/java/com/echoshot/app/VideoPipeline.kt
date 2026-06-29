@@ -63,7 +63,8 @@ object VideoPipeline {
         paddingFactor: Float,
         logFile: File,
         format: LogFormat,
-        outputResolution: OutputResolution = OutputResolution.FHD
+        outputResolution: OutputResolution = OutputResolution.FHD,
+        outputPrefix: String = "cropped"  // FancamEdit은 "add"로 전달
     ): Uri? {
         // 0) 촬영 시각
         val origTakenMs = queryDateTakenMs(context, srcVideoUri)
@@ -98,7 +99,7 @@ object VideoPipeline {
         if (!dcimDir.exists()) dcimDir.mkdirs()
         val ts = SimpleDateFormat("yyyy_MM_dd_HH_mm_ss_SSS", Locale.US).format(Date())
         val unique = (System.nanoTime() % 100000).toString().padStart(5, '0')
-        val outName = "VID_${sessionId}_cropped_${ts}_$unique.mp4"
+        val outName = "VID_${sessionId}_${outputPrefix}_${ts}_$unique.mp4"
         val outputFile = File(dcimDir, outName)
 
         // ✅ 디버그 JSON(실제 적용된 크롭) 내부 파일 경로

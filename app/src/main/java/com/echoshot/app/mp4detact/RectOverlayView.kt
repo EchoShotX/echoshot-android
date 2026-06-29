@@ -70,16 +70,7 @@ class RectOverlayView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        // 바깥 영역 음영
-        canvas.save()
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), shade)
-        val c = canvas.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), 255)
-        val clear = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
-        canvas.drawRect(r, clear)
-        clear.xfermode = null
-        canvas.restoreToCount(c)
-
-        // 빨간 테두리
+        // 빨간 테두리 (음영 처리 전부 제거, 전 영역 100% 밝기 유지)
         canvas.drawRect(r, paint)
     }
 

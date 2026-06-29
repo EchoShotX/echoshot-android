@@ -124,11 +124,12 @@ class MyGLRenderer {
         """
         private const val FRAGMENT_SHADER_CODE = """
             #extension GL_OES_EGL_image_external : require
-            precision mediump float;
+            precision highp float;
             uniform samplerExternalOES sTexture;
             varying vec2 vTexCoord;
             void main() {
-                gl_FragColor = texture2D(sTexture, vTexCoord);
+                vec2 clampedCoord = clamp(vTexCoord, 0.001, 0.999);
+                gl_FragColor = texture2D(sTexture, clampedCoord);
             }
         """
     }
@@ -382,8 +383,14 @@ class FrameCropper(
         val outH = outputResolution.height
         Log.d(TAG, "출력 비디오 포맷 해상도: ${outW}x${outH} (${outputResolution.displayName})")
         
+        val bitRate = when (outputResolution) {
+            OutputResolution.UHD -> 35_000_000
+            OutputResolution.FHD -> 15_000_000
+            OutputResolution.HD -> 8_000_000
+        }
+        
         val outFmt = MediaFormat.createVideoFormat(mime, outW, outH).apply {
-            setInteger(MediaFormat.KEY_BIT_RATE, 5_000_000)
+            setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             setInteger(
@@ -393,7 +400,7 @@ class FrameCropper(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 setInteger(
                     MediaFormat.KEY_BITRATE_MODE,
-                    MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
+                    MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
                 )
             }
         }
@@ -427,6 +434,27 @@ class FrameCropper(
         val textureId = renderer.createOESTexture()
 
         val surfaceTexture = SurfaceTexture(textureId).apply { setDefaultBufferSize(inW, inH) }
+        
+        val frameSyncObject = Object()
+        var frameAvailable = false
+        val ht = android.os.HandlerThread("FrameCropperHT").apply { start() }
+        val htHandler = android.os.Handler(ht.looper)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            surfaceTexture.setOnFrameAvailableListener({
+                synchronized(frameSyncObject) {
+                    frameAvailable = true
+                    frameSyncObject.notifyAll()
+                }
+            }, htHandler)
+        } else {
+            surfaceTexture.setOnFrameAvailableListener {
+                synchronized(frameSyncObject) {
+                    frameAvailable = true
+                    frameSyncObject.notifyAll()
+                }
+            }
+        }
+        
         val decoderSurface = Surface(surfaceTexture)
         val decoder =
             MediaCodec.createDecoderByType(inFmt.getString(MediaFormat.KEY_MIME)!!).apply {
@@ -506,7 +534,29 @@ class FrameCropper(
                     decoder.releaseOutputBuffer(outIndex, doRender)
 
                     if (doRender) {
-                        surfaceTexture.updateTexImage()
+                        var waitOk = true
+                        synchronized(frameSyncObject) {
+                            var waitCount = 0
+                            while (!frameAvailable) {
+                                try {
+                                    frameSyncObject.wait(2500)
+                                    if (!frameAvailable) {
+                                        waitCount++
+                                        if (waitCount > 3) {
+                                            Log.e(TAG, "Frame wait timed out in main loop!")
+                                            waitOk = false
+                                            break
+                                        }
+                                    }
+                                } catch (e: InterruptedException) {
+                                    Log.e(TAG, "Interrupted while waiting for frame")
+                                }
+                            }
+                            frameAvailable = false
+                        }
+                        if (waitOk) {
+                            try { surfaceTexture.updateTexImage() } catch (e: Exception) { Log.e(TAG, "updateTexImage failed", e) }
+                        }
                         surfaceTexture.getTransformMatrix(st)
 
                         val data = paddedFrames.getOrNull(renderIdx) ?: paddedFrames.last()
@@ -521,16 +571,17 @@ class FrameCropper(
                         val px2f = (data.x2 * scaleX).toFloat()
                         val py2f = (data.y2 * scaleY).toFloat()
 
-                        // 짝수 정렬 및 9:16 미세 보정
-                        var x1 = floor(px1f).toInt();
-                        var y1 = floor(py1f).toInt()
-                        var x2 = ceil(px2f).toInt();
-                        var y2 = ceil(py2f).toInt()
+                        // 짝수 정렬, 안전 마진 보장 및 9:16 미세 보정
+                        val margin = 2
+                        var x1 = (floor(px1f).toInt() + margin).coerceIn(0, inW)
+                        var y1 = (floor(py1f).toInt() + margin).coerceIn(0, inH)
+                        var x2 = (ceil(px2f).toInt() - margin).coerceIn(x1 + 2, inW)
+                        var y2 = (ceil(py2f).toInt() - margin).coerceIn(y1 + 2, inH)
 
-                        x1 = (x1.coerceIn(0, inW - 2)) and -2
-                        y1 = (y1.coerceIn(0, inH - 2)) and -2
-                        x2 = ((x2.coerceIn(x1 + 2, inW)) + 1) and -2
-                        y2 = ((y2.coerceIn(y1 + 2, inH)) + 1) and -2
+                        x1 = x1 and -2
+                        y1 = y1 and -2
+                        x2 = (x2 and -2).coerceAtLeast(x1 + 2)
+                        y2 = (y2 and -2).coerceAtLeast(y1 + 2)
 
                         val cropW = (x2 - x1).coerceAtLeast(2)
                         val cropH = (y2 - y1).coerceAtLeast(2)
@@ -539,13 +590,17 @@ class FrameCropper(
                             val cx = (x1 + x2) / 2
                             x1 = cx - adjustedW / 2
                             x2 = cx + adjustedW / 2
+                            
+                            x1 = x1 and -2
+                            x2 = (x2 and -2).coerceAtLeast(x1 + 2)
                         }
 
-                        // 픽셀 → 정규화
-                        val u0 = (x1 / inW.toFloat()).coerceIn(0f, 1f)
-                        val v0 = (y1 / inH.toFloat()).coerceIn(0f, 1f)
-                        val u1 = (x2 / inW.toFloat()).coerceIn(0f, 1f)
-                        val v1 = (y2 / inH.toFloat()).coerceIn(0f, 1f)
+                        // 픽셀 → 정규화 (경계선 노이즈 방지를 위해 0.001f 안쪽으로 샘플링 보정)
+                        val eps = 0.001f
+                        val u0 = (x1 / inW.toFloat()).coerceIn(eps, 1f - eps)
+                        val v0 = (y1 / inH.toFloat()).coerceIn(eps, 1f - eps)
+                        val u1 = (x2 / inW.toFloat()).coerceIn(eps, 1f - eps)
+                        val v1 = (y2 / inH.toFloat()).coerceIn(eps, 1f - eps)
 
                         // 최종 텍스처 행렬 = CROP × ST
                         Matrix.setIdentityM(crop, 0)
@@ -562,6 +617,7 @@ class FrameCropper(
                         // ✅ FHD 해상도로 뷰포트 설정
                         GLES20.glViewport(0, 0, outW, outH)
                         renderer.drawFrame(textureId, finalM)
+                        GLES20.glFinish() // GPU 파이프라인 동기화, 쓰레기 값 참조 방지
                         EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, ptsUs * 1000L)
                         EGL14.eglSwapBuffers(eglDisplay, eglSurface)
 
@@ -666,7 +722,29 @@ class FrameCropper(
                         decoder.releaseOutputBuffer(outIndex, doRender)
 
                         if (doRender) {
-                            surfaceTexture.updateTexImage()
+                            var waitOk = true
+                            synchronized(frameSyncObject) {
+                                var waitCount = 0
+                                while (!frameAvailable) {
+                                    try {
+                                        frameSyncObject.wait(2500)
+                                        if (!frameAvailable) {
+                                            waitCount++
+                                            if (waitCount > 3) {
+                                                Log.e(TAG, "Frame wait timed out in EOS loop!")
+                                                waitOk = false
+                                                break
+                                            }
+                                        }
+                                    } catch (e: InterruptedException) {
+                                        Log.e(TAG, "Interrupted while waiting for frame")
+                                    }
+                                }
+                                frameAvailable = false
+                            }
+                            if (waitOk) {
+                                try { surfaceTexture.updateTexImage() } catch (e: Exception) { Log.e(TAG, "updateTexImage failed", e) }
+                            }
                             surfaceTexture.getTransformMatrix(st)
 
                             val data = paddedFrames.getOrNull(renderIdx) ?: paddedFrames.last()
@@ -680,15 +758,17 @@ class FrameCropper(
                             val px2f = (data.x2 * scaleX).toFloat()
                             val py2f = (data.y2 * scaleY).toFloat()
 
-                            var x1 = floor(px1f).toInt()
-                            var y1 = floor(py1f).toInt()
-                            var x2 = ceil(px2f).toInt()
-                            var y2 = ceil(py2f).toInt()
+                            // 짝수 정렬, 안전 마진 보장 및 9:16 미세 보정
+                            val margin = 2
+                            var x1 = (floor(px1f).toInt() + margin).coerceIn(0, inW)
+                            var y1 = (floor(py1f).toInt() + margin).coerceIn(0, inH)
+                            var x2 = (ceil(px2f).toInt() - margin).coerceIn(x1 + 2, inW)
+                            var y2 = (ceil(py2f).toInt() - margin).coerceIn(y1 + 2, inH)
 
-                            x1 = (x1.coerceIn(0, inW - 2)) and -2
-                            y1 = (y1.coerceIn(0, inH - 2)) and -2
-                            x2 = ((x2.coerceIn(x1 + 2, inW)) + 1) and -2
-                            y2 = ((y2.coerceIn(y1 + 2, inH)) + 1) and -2
+                            x1 = x1 and -2
+                            y1 = y1 and -2
+                            x2 = (x2 and -2).coerceAtLeast(x1 + 2)
+                            y2 = (y2 and -2).coerceAtLeast(y1 + 2)
 
                             val cropW = (x2 - x1).coerceAtLeast(2)
                             val cropH = (y2 - y1).coerceAtLeast(2)
@@ -697,12 +777,17 @@ class FrameCropper(
                                 val cx = (x1 + x2) / 2
                                 x1 = cx - adjustedW / 2
                                 x2 = cx + adjustedW / 2
+                                
+                                x1 = x1 and -2
+                                x2 = (x2 and -2).coerceAtLeast(x1 + 2)
                             }
 
-                            val u0 = (x1 / inW.toFloat()).coerceIn(0f, 1f)
-                            val v0 = (y1 / inH.toFloat()).coerceIn(0f, 1f)
-                            val u1 = (x2 / inW.toFloat()).coerceIn(0f, 1f)
-                            val v1 = (y2 / inH.toFloat()).coerceIn(0f, 1f)
+                            // 픽셀 → 정규화 (경계선 노이즈 방지를 위해 0.001f 안쪽으로 샘플링 보정)
+                            val eps = 0.001f
+                            val u0 = (x1 / inW.toFloat()).coerceIn(eps, 1f - eps)
+                            val v0 = (y1 / inH.toFloat()).coerceIn(eps, 1f - eps)
+                            val u1 = (x2 / inW.toFloat()).coerceIn(eps, 1f - eps)
+                            val v1 = (y2 / inH.toFloat()).coerceIn(eps, 1f - eps)
 
                             Matrix.setIdentityM(crop, 0)
                             Matrix.translateM(crop, 0, u0, v0, 0f)
@@ -719,6 +804,7 @@ class FrameCropper(
                             // ✅ FHD 해상도로 뷰포트 설정
                             GLES20.glViewport(0, 0, outW, outH)
                             renderer.drawFrame(textureId, finalM)
+                            GLES20.glFinish() // GPU 동기화
                             EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, ptsUs * 1000L)
                             EGL14.eglSwapBuffers(eglDisplay, eglSurface)
 
@@ -827,6 +913,11 @@ class FrameCropper(
             try {
                 debugWriter?.flush(); debugWriter?.close()
             } catch (_: Throwable) {
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                ht.quitSafely()
+            } else {
+                ht.quit()
             }
         }
 

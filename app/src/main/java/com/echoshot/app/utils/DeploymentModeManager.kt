@@ -10,7 +10,7 @@ object DeploymentModeManager {
      * true: 프로필 페이지 숨김
      * false: 프로필 페이지 표시
      */
-    private const val DEPLOYMENT_MODE = false
+    private const val DEPLOYMENT_MODE = true
     
     /**
      * 배포모드 상태를 반환합니다.

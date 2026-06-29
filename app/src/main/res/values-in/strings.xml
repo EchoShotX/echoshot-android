@@ -102,4 +102,5 @@
     <string name="fancam_select_video">संपादित करने के लिए वीडियो चुनें</string>
     <string name="fancam_processing">प्रोसेसिंग हो रही है…</string>
     <string name="fancam_history_title">संपादन इतिहास</string>
+    <string name="fancam_high_res_warning">Tergantung pada spesifikasi perangkat, noise mungkin terjadi saat memilih resolusi tinggi.</string>
 </resources>

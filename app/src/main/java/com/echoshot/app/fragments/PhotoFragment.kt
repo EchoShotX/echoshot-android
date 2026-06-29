@@ -133,6 +133,10 @@ class PhotoFragment : Fragment() {
                 // 사진 모드에서 갤러리로 이동
                 openGallery()
             },
+            onArchiveClick = {
+                val action = PhotoFragmentDirections.actionPhotoFragmentToFancamEditFragment()
+                findNavController().navigate(action)
+            },
             onProfileClick = {
                 // 배포모드일 때는 프로필로 이동하지 않음
                 if (DeploymentModeManager.isDeploymentMode()) {

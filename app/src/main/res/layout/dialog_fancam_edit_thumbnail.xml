@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="300dp"
+    android:layout_height="wrap_content"
+    android:padding="16dp"
+    android:background="@drawable/rounded_bg_dark">
+
+    <!-- 1) 썸네일 + 드래그 박스 오버레이 (70% 크기) -->
+    <FrameLayout
+        android:id="@+id/fancamCanvas"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintDimensionRatio="9:16"
+        app:layout_constraintWidth_percent="0.7"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <ImageView
+            android:id="@+id/lockedThumbnail"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:adjustViewBounds="true"
+            android:scaleType="fitCenter" />
+
+        <com.echoshot.app.mp4detact.RectOverlayView
+            android:id="@+id/lockedOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+    </FrameLayout>
+
+    <!-- 1-1) 박스 크기 조절 (선택사항) 및 안내 -->
+    <LinearLayout
+        android:id="@+id/sizeControls"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        app:layout_constraintTop_toBottomOf="@id/fancamCanvas"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <Button
+            android:id="@+id/btnSmaller"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:minHeight="36dp"
+            android:paddingLeft="12dp"
+            android:paddingRight="12dp"
+            android:text="@string/smaller"
+            android:textColor="@android:color/white"
+            android:backgroundTint="#2A2A2A"/>
+
+        <Space
+            android:layout_width="12dp"
+            android:layout_height="0dp"/>
+
+        <Button
+            android:id="@+id/btnBigger"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:minHeight="36dp"
+            android:paddingLeft="12dp"
+            android:paddingRight="12dp"
+            android:text="@string/bigger"
+            android:textColor="@android:color/white"
+            android:backgroundTint="#2A2A2A"/>
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_weight="1"/>
+
+        <ImageView
+            android:id="@+id/btnInfo"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@android:drawable/ic_dialog_info"
+            app:tint="#A0A0A0"
+            android:contentDescription="Information"/>
+    </LinearLayout>
+
+    <!-- 2) 해상도 선택 (HD/FHD/UHD) -->
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/toggleResolution"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        app:layout_constraintTop_toBottomOf="@id/sizeControls"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:singleSelection="true">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnHD"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="43dp"
+            android:minHeight="43dp"
+            android:layout_weight="1"
+            android:textColor="@color/toggle_button_text"
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            app:backgroundTint="@color/toggle_button_bg"
+            app:strokeColor="@color/toggle_button_stroke"
+            android:text="HD"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnFHD"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="43dp"
+            android:minHeight="43dp"
+            android:layout_weight="1"
+            android:textColor="@color/toggle_button_text"
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            app:backgroundTint="@color/toggle_button_bg"
+            app:strokeColor="@color/toggle_button_stroke"
+            android:text="FHD"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnUHD"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="43dp"
+            android:minHeight="43dp"
+            android:layout_weight="1"
+            android:textColor="@color/toggle_button_text"
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            app:backgroundTint="@color/toggle_button_bg"
+            app:strokeColor="@color/toggle_button_stroke"
+            android:text="UHD"/>
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+    <!-- 3) 크롭 모드(인물/와이드) -->
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/toggleCropMode"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        app:layout_constraintTop_toBottomOf="@id/toggleResolution"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:singleSelection="true">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCenterMode"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="43dp"
+            android:minHeight="43dp"
+            android:layout_weight="1"
+            android:textColor="@color/toggle_button_text"
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            app:backgroundTint="@color/toggle_button_bg"
+            app:strokeColor="@color/toggle_button_stroke"
+            android:text="@string/center_mode"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnWideMode"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="43dp"
+            android:minHeight="43dp"
+            android:layout_weight="1"
+            android:textColor="@color/toggle_button_text"
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            app:backgroundTint="@color/toggle_button_bg"
+            app:strokeColor="@color/toggle_button_stroke"
+            android:text="@string/wide_mode"/>
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+    <!-- 4) 트래킹 성능(빠른추적/고성능추적) -->
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/toggleTrackMode"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        app:layout_constraintTop_toBottomOf="@id/toggleCropMode"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:singleSelection="true">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnFastTrack"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="43dp"
+            android:minHeight="43dp"
+            android:layout_weight="1"
+            android:textColor="@color/toggle_button_text"
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            app:backgroundTint="@color/toggle_button_bg"
+            app:strokeColor="@color/toggle_button_stroke"
+            android:text="@string/fast_track"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnHighSpec"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="43dp"
+            android:minHeight="43dp"
+            android:layout_weight="1"
+            android:textColor="@color/toggle_button_text"
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            app:backgroundTint="@color/toggle_button_bg"
+            app:strokeColor="@color/toggle_button_stroke"
+            android:text="@string/high_spec_track"/>
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+    <!-- 5) 시작 (단일 버튼) -->
+    <Button
+        android:id="@+id/startButton"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:minHeight="43dp"
+        android:text="@string/start"
+        android:backgroundTint="#90EE90"
+        android:textColor="@android:color/black"
+        android:layout_marginTop="8dp"
+        app:layout_constraintTop_toBottomOf="@id/toggleTrackMode"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- 필요시 기존 btnMakeLog는 제거하거나 숨기세요 -->
+    <!--
+    <Button
+        android:id="@+id/btnMakeLog"
+        android:visibility="gone"
+        ... />
+    -->
+
+</androidx.constraintlayout.widget.ConstraintLayout>

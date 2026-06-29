@@ -105,4 +105,5 @@
     <string name="fancam_mode_auto_fast">빠른추적</string>
     <string name="fancam_mode_auto_high">고성능추적</string>
     <string name="fancam_mode_hybrid">인물선택</string>
+    <string name="fancam_high_res_warning">기기 사양에 따라 고화질 선택시 영상에 노이즈가 발생할 수 있습니다.</string>
 </resources>

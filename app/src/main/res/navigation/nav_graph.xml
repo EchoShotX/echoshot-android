@@ -703,6 +703,9 @@
         <action
             android:id="@+id/action_customFrontPreviewFragment_to_profileFragment"
             app:destination="@id/profile_fragment" />
+        <action
+            android:id="@+id/action_customFrontPreviewFragment_to_fancamEditFragment"
+            app:destination="@id/fancam_edit_fragment" />
 
     </fragment>
 
@@ -748,6 +751,9 @@
         <action
             android:id="@+id/action_photoFragment_to_profileFragment"
             app:destination="@id/profile_fragment" />
+        <action
+            android:id="@+id/action_photoFragment_to_fancamEditFragment"
+            app:destination="@id/fancam_edit_fragment" />
     </fragment>
 
     <fragment
@@ -794,6 +800,9 @@
         <action
             android:id="@+id/action_photoFrontFragment_to_galleryFragment"
             app:destination="@id/gallery_fragment" />
+        <action
+            android:id="@+id/action_photoFrontFragment_to_fancamEditFragment"
+            app:destination="@id/fancam_edit_fragment" />
     </fragment>
 
     <fragment

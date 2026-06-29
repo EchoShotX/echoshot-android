@@ -16,18 +16,36 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <!-- 상단 제목 -->
-            <TextView
-                android:id="@+id/tvFancamEditTitle"
+            <!-- 상단 헤더 -->
+            <RelativeLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/fancam_edit_title"
-                android:textColor="#000000"
-                android:textSize="24sp"
-                android:textStyle="bold"
-                android:gravity="center"
-                android:padding="12dp"
-                android:layout_marginTop="16dp" />
+                android:layout_marginTop="16dp"
+                android:paddingHorizontal="16dp">
+
+                <TextView
+                    android:id="@+id/tvFancamEditTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/fancam_edit_title"
+                    android:textColor="#000000"
+                    android:textSize="24sp"
+                    android:textStyle="bold"
+                    android:layout_centerInParent="true"
+                    android:padding="12dp" />
+
+                <ImageView
+                    android:id="@+id/btnHeaderHome"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_alignParentEnd="true"
+                    android:layout_centerVertical="true"
+                    android:padding="8dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_home"
+                    app:tint="#000000"
+                    android:contentDescription="Home" />
+            </RelativeLayout>
 
             <!-- 동영상 편집 시작 버튼 -->
             <LinearLayout

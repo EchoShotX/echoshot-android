@@ -126,4 +126,5 @@
     <string name="fancam_mode_auto_fast">Fast Track</string>
     <string name="fancam_mode_auto_high">High Track</string>
     <string name="fancam_mode_hybrid">Hybrid Picker</string>
+    <string name="fancam_high_res_warning">Depending on device specifications, noise may occur when selecting high resolution.</string>
 </resources>

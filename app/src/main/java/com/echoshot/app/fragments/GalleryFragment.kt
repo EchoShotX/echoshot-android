@@ -185,11 +185,6 @@ class GalleryFragment : Fragment() {
                 findNavController().navigate(action)
             },
             onArchiveClick = {
-                // 배포모드일 때는 업로드 페이지로 이동하지 않음
-                if (DeploymentModeManager.isDeploymentMode()) {
-                    return@setupBottomNavigationBar
-                }
-                // 갤러리에서 업로드 페이지로 이동
                 val action = GalleryFragmentDirections.actionGalleryFragmentToFancamEditFragment()
                 findNavController().navigate(action)
             },
@@ -800,7 +795,9 @@ class GalleryFragment : Fragment() {
                 val parts = name.split('_')
                 if (parts.size < 3) continue
                 val uuid = parts[1]
-                val type = parts[2] // zoomed | original | cropped
+                val type = parts[2] // zoomed | original | cropped | add
+                // "add" 타입은 FancamEdit 전용 영상 → 확장 갤러리에 포함하지 않음
+                if (type == "add") continue
                 val uri  = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
                 items += MediaItem(uri, c.getLong(dateCol), c.getLong(durCol), uuid, type)
             }

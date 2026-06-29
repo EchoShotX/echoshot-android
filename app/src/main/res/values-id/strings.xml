@@ -102,4 +102,5 @@
     <string name="fancam_select_video">Pilih Video untuk Diedit</string>
     <string name="fancam_processing">Memproses…</string>
     <string name="fancam_history_title">Riwayat Edit</string>
+    <string name="fancam_high_res_warning">Tergantung pada spesifikasi perangkat, noise mungkin terjadi saat memilih resolusi tinggi.</string>
 </resources>

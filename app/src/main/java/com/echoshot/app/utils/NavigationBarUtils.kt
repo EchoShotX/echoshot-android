@@ -77,37 +77,27 @@ object NavigationBarUtils {
             }
             isExpanded = false
         } else {
-            // 갤러리/홈/프로필에서는 항상 펼쳐진 상태 (화면의 95%)
-            // 배포모드일 때는 프로필 버튼과 업로드 버튼 숨김
-            // 5등분 구조: 갤러리(-2/5) | 업로드(-1/5) | 카메라(0) | 프로필(+1/5) | 홈(+2/5)
+            // 3단 대칭 구조: 갤러리(좌) | 카메라(중) | 직캠 편집(우)
             navGallery?.visibility = View.VISIBLE
-            navHome?.visibility = View.VISIBLE
+            navArchive?.visibility = View.VISIBLE
             
-            // 배포모드일 때 프로필 버튼과 업로드 버튼 숨김
-            if (isDeploymentMode) {
-                navProfileContainer?.visibility = View.GONE
-                navArchive?.visibility = View.GONE
-            } else {
-                navProfileContainer?.visibility = View.VISIBLE
-                navArchive?.visibility = View.VISIBLE
-            }
+            // 홈과 프로필은 하단바 편입에서 제외 (영원히 숨김)
+            navHome?.visibility = View.GONE
+            navProfileContainer?.visibility = View.GONE
             
             navBarBackground?.let {
                 val screenWidth = it.resources.displayMetrics.widthPixels
-                val expandedWidth = (screenWidth * 0.95f).toInt()
+                val expandedWidth = (screenWidth * 0.95f).toInt() // 원래대로 95% 꽉 차게
                 val params = it.layoutParams
                 params.width = expandedWidth
                 it.layoutParams = params
                 
-                // 버튼 위치 계산: 5등분 구조
-                // 갤러리: -2/5, 업로드: -1/5, 프로필: +1/5, 홈: +2/5
-                val oneFifth = expandedWidth / 5f
-                navGallery?.translationX = -oneFifth * 2f
-                if (!isDeploymentMode) {
-                    navArchive?.translationX = -oneFifth
-                    navProfileContainer?.translationX = oneFifth
-                }
-                navHome?.translationX = oneFifth * 2f
+                // 버튼 위치 계산: 기존 홈과 갤러리 자리(양 끝)로 넓게 배치
+                val symmetricOffset = expandedWidth * 0.4f
+                navGallery?.translationX = -symmetricOffset
+                navArchive?.translationX = symmetricOffset
+                navHome?.translationX = 0f
+                navProfileContainer?.translationX = 0f
             }
             isExpanded = true
         }
@@ -144,12 +134,8 @@ object NavigationBarUtils {
             }
         }
         
-        // 업로드 클릭 - 배포모드일 때는 클릭 비활성화
+        // 팬캠 에딧 클릭 - 배포모드 여부와 관계없이 항상 활성화
         navArchive?.setOnClickListener {
-            if (isDeploymentMode) {
-                // 배포모드일 때는 클릭 무시
-                return@setOnClickListener
-            }
             if (currentPage != "upload") {
                 onArchiveClick?.invoke()
             }
@@ -202,19 +188,15 @@ object NavigationBarUtils {
             ?.withEndAction { navGallery.visibility = View.GONE }
             ?.start()
         
-        // 배포모드가 아닐 때만 업로드 버튼 애니메이션
-        if (!isDeploymentMode) {
-            navArchive?.animate()
-                ?.alpha(0f)
-                ?.scaleX(0.5f)
-                ?.scaleY(0.5f)
-                ?.translationX(0f)
-                ?.setDuration(200)
-                ?.withEndAction { navArchive.visibility = View.GONE }
-                ?.start()
-        } else {
-            navArchive?.visibility = View.GONE
-        }
+        // 팬캠 에딧 버튼 항상 애니메이션
+        navArchive?.animate()
+            ?.alpha(0f)
+            ?.scaleX(0.5f)
+            ?.scaleY(0.5f)
+            ?.translationX(0f)
+            ?.setDuration(200)
+            ?.withEndAction { navArchive.visibility = View.GONE }
+            ?.start()
         
         navHome?.animate()
             ?.alpha(0f)
@@ -271,12 +253,12 @@ object NavigationBarUtils {
         if (navBarBackground == null) return
         
         val collapsedWidth = navBarBackground.dpToPx(48)
-        // 화면 너비의 95%로 펼쳐짐
+        // 화면 너비의 95%로 펼쳐짐 (원래대로 꽉 차게)
         val screenWidth = navBarBackground.resources.displayMetrics.widthPixels
         val expandedWidth = (screenWidth * 0.95f).toInt()
         
-        // 버튼이 이동할 거리 계산 (5등분 구조)
-        val oneFifth = expandedWidth / 5f
+        // 대칭 확산 거리 계산 (기존의 양 끝 자리인 0.4 사용)
+        val symmetricOffset = expandedWidth * 0.4f
         
         if (isExpanded) {
             // 접기 애니메이션
@@ -290,42 +272,17 @@ object NavigationBarUtils {
                 ?.withEndAction { navGallery.visibility = View.GONE }
                 ?.start()
             
-            // 배포모드가 아닐 때만 업로드 버튼 애니메이션
-            if (!isDeploymentMode) {
-                navArchive?.animate()
-                    ?.alpha(0f)
-                    ?.scaleX(0.5f)
-                    ?.scaleY(0.5f)
-                    ?.translationX(0f)
-                    ?.setDuration(200)
-                    ?.withEndAction { navArchive.visibility = View.GONE }
-                    ?.start()
-            } else {
-                navArchive?.visibility = View.GONE
-            }
-            
-            navHome?.animate()
+            navArchive?.animate()
                 ?.alpha(0f)
                 ?.scaleX(0.5f)
                 ?.scaleY(0.5f)
                 ?.translationX(0f)
                 ?.setDuration(200)
-                ?.withEndAction { navHome.visibility = View.GONE }
+                ?.withEndAction { navArchive.visibility = View.GONE }
                 ?.start()
             
-            // 배포모드가 아닐 때만 프로필 버튼 애니메이션
-            if (!isDeploymentMode) {
-                navProfileContainer?.animate()
-                    ?.alpha(0f)
-                    ?.scaleX(0.5f)
-                    ?.scaleY(0.5f)
-                    ?.translationX(0f)
-                    ?.setDuration(200)
-                    ?.withEndAction { navProfileContainer.visibility = View.GONE }
-                    ?.start()
-            } else {
-                navProfileContainer?.visibility = View.GONE
-            }
+            navHome?.visibility = View.GONE
+            navProfileContainer?.visibility = View.GONE
             
             // 2. 바 배경 줄이기
             ValueAnimator.ofInt(expandedWidth, collapsedWidth).apply {
@@ -355,7 +312,7 @@ object NavigationBarUtils {
                 start()
             }
             
-            // 2. 버튼들 가운데서 배치 위치로 이동하면서 페이드인
+            // 2. 버튼들 가운데서 좌우 대칭으로 페이드인
             navGallery?.apply {
                 visibility = View.VISIBLE
                 alpha = 0f
@@ -366,36 +323,14 @@ object NavigationBarUtils {
                     .alpha(1f)
                     .scaleX(1f)
                     .scaleY(1f)
-                    .translationX(-oneFifth * 2f)
+                    .translationX(-symmetricOffset)
                     .setDuration(300)
                     .setStartDelay(100)
                     .setInterpolator(OvershootInterpolator(1.2f))
                     .start()
             }
             
-            // 배포모드가 아닐 때만 업로드 버튼 표시
-            if (!isDeploymentMode) {
-                navArchive?.apply {
-                    visibility = View.VISIBLE
-                    alpha = 0f
-                    scaleX = 0.5f
-                    scaleY = 0.5f
-                    translationX = 0f
-                    animate()
-                        .alpha(1f)
-                        .scaleX(1f)
-                        .scaleY(1f)
-                        .translationX(-oneFifth)
-                        .setDuration(300)
-                        .setStartDelay(100)
-                        .setInterpolator(OvershootInterpolator(1.2f))
-                        .start()
-                }
-            } else {
-                navArchive?.visibility = View.GONE
-            }
-            
-            navHome?.apply {
+            navArchive?.apply {
                 visibility = View.VISIBLE
                 alpha = 0f
                 scaleX = 0.5f
@@ -405,34 +340,15 @@ object NavigationBarUtils {
                     .alpha(1f)
                     .scaleX(1f)
                     .scaleY(1f)
-                    .translationX(oneFifth * 2f)
+                    .translationX(symmetricOffset)
                     .setDuration(300)
                     .setStartDelay(100)
                     .setInterpolator(OvershootInterpolator(1.2f))
                     .start()
             }
             
-            // 배포모드가 아닐 때만 프로필 버튼 표시
-            if (!isDeploymentMode) {
-                navProfileContainer?.apply {
-                    visibility = View.VISIBLE
-                    alpha = 0f
-                    scaleX = 0.5f
-                    scaleY = 0.5f
-                    translationX = 0f
-                    animate()
-                        .alpha(1f)
-                        .scaleX(1f)
-                        .scaleY(1f)
-                        .translationX(oneFifth)
-                        .setDuration(300)
-                        .setStartDelay(100)
-                        .setInterpolator(OvershootInterpolator(1.2f))
-                        .start()
-                }
-            } else {
-                navProfileContainer?.visibility = View.GONE
-            }
+            navHome?.visibility = View.GONE
+            navProfileContainer?.visibility = View.GONE
             
             isExpanded = true
         }
