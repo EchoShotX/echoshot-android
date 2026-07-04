@@ -325,7 +325,7 @@ private val EGL_SMPTE2086_WHITE_POINT_Y_EXT            = 0x3348
 private val EGL_SMPTE2086_MAX_LUMINANCE_EXT            = 0x3349
 private val EGL_SMPTE2086_MIN_LUMINANCE_EXT            = 0x334A
 
-class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn: Boolean, transfer: Int,
+class CustomHardwarePipelineBottomCrop (width: Int, height: Int, fps: Int, filterOn: Boolean, transfer: Int,
                               dynamicRange: Long, characteristics: CameraCharacteristics, encoder: EncoderWrapper, private val originalEncoder: EncoderWrapper,
                               viewFinder: AutoFitSurfaceView, private val physicalCameraId: String? = null) : Pipeline(width, height, fps, filterOn, dynamicRange,
     characteristics, encoder, viewFinder) {
@@ -1187,11 +1187,14 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
                 finalScaleY = zoomScale
             }
             
-            val translateToCenter = floatArrayOf(
+            val pivotX = 0.5f
+            val pivotY = 0.0f
+
+            val translateToPivot = floatArrayOf(
                 1f, 0f, 0f, 0f,
                 0f, 1f, 0f, 0f,
                 0f, 0f, 1f, 0f,
-                -0.5f, -0.5f, 0f, 1f
+                -pivotX, -pivotY, 0f, 1f
             )
 
             val scaleMatrix = floatArrayOf(
@@ -1205,12 +1208,12 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
                 1f, 0f, 0f, 0f,
                 0f, 1f, 0f, 0f,
                 0f, 0f, 1f, 0f,
-                0.5f, 0.5f, 0f, 1f
+                pivotX, pivotY, 0f, 1f
             )
 
             val tempMatrix = FloatArray(16)
             val zoomMatrix = FloatArray(16)
-            android.opengl.Matrix.multiplyMM(tempMatrix, 0, scaleMatrix, 0, translateToCenter, 0)
+            android.opengl.Matrix.multiplyMM(tempMatrix, 0, scaleMatrix, 0, translateToPivot, 0)
             android.opengl.Matrix.multiplyMM(zoomMatrix, 0, translateBack, 0, tempMatrix, 0)
 
             val finalMatrix = FloatArray(16)

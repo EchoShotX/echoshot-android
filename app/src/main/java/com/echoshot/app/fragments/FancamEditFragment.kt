@@ -541,7 +541,7 @@ class FancamEditFragment : Fragment() {
 
         val action = FancamEditFragmentDirections.actionFancamEditFragmentToGalleryFragment(
             selectedCameraId, 1920, 1080, 30, 0L, 0,
-            false, false, 0, false, 0, true, "hybrid"
+            false, false, 0, false, 0, true, "default"
         ).apply {
             startBasic = false
         }
@@ -558,7 +558,7 @@ class FancamEditFragment : Fragment() {
             selectedCameraId, 1920, 1080, 30,
             android.hardware.camera2.params.DynamicRangeProfiles.STANDARD,
             android.hardware.camera2.params.ColorSpaceProfiles.UNSPECIFIED,
-            false, false, 0, false, 0, true, "hybrid"
+            false, false, 0, false, 0, true, "default"
         )
         findNavController().navigate(action)
     }

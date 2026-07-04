@@ -345,7 +345,7 @@ class HomeFragment : Fragment() {
             false,  // filterOn
             0,      // transfer
             true,   // useHardware
-            "hybrid" // pipelineMode
+            "default" // pipelineMode
         )
         findNavController().navigate(action)
     }
@@ -430,7 +430,7 @@ class HomeFragment : Fragment() {
             false,  // filterOn
             0,      // transfer
             true,   // useHardware
-            "hybrid" // pipelineMode
+            "default" // pipelineMode
         ).apply {
             startBasic = false  // 확장 갤러리 탭 기본 활성화
         }
@@ -451,7 +451,7 @@ class HomeFragment : Fragment() {
             false,
             0,
             true,
-            "hybrid"
+            "default"
         )
         findNavController().navigate(action)
     }
@@ -470,7 +470,7 @@ class HomeFragment : Fragment() {
             false,
             0,
             true,
-            "hybrid"
+            "default"
         ).apply {
             startBasic = false
         }

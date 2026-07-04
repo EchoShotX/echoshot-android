@@ -29,12 +29,17 @@
             android:layout_weight="1" />
 
         <!-- 가운데 아이콘 -->
-        <ImageView
+        <TextView
             android:id="@+id/icon_nozoom"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@drawable/nozoom"
-            android:contentDescription="Nozoom_Mode" />
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="C"
+            android:textColor="@android:color/white"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Zoom crop mode" />
 
         <!-- 중간 여백 -->
         <Space
@@ -47,6 +52,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/zoom"
+            android:visibility="gone"
             android:contentDescription="Zoom_Mode" />
 
         <Space
@@ -276,6 +282,148 @@
         android:visibility="gone" />
 
     <!-- 하단 네비게이션 바 -->
+    <FrameLayout
+        android:id="@+id/zoom_mode_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="50dp"
+        android:background="#B3000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/zoom_mode_panel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top"
+            android:orientation="vertical"
+            android:paddingStart="44dp"
+            android:paddingTop="18dp"
+            android:paddingEnd="44dp"
+            android:paddingBottom="18dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/zoom_mode_default"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="6dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="8dp">
+
+                    <ImageView
+                        android:layout_width="96dp"
+                        android:layout_height="171dp"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/zoom_mode_default" />
+
+                    <TextView
+                        android:layout_width="112dp"
+                        android:layout_height="32dp"
+                        android:gravity="center"
+                        android:text="Default Zoom"
+                        android:textColor="@android:color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/zoom_mode_center"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="8dp">
+
+                    <ImageView
+                        android:layout_width="96dp"
+                        android:layout_height="171dp"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/zoom_mode_center" />
+
+                    <TextView
+                        android:layout_width="112dp"
+                        android:layout_height="32dp"
+                        android:gravity="center"
+                        android:text="Center Zoom"
+                        android:textColor="@android:color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:layout_marginTop="12dp"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/zoom_mode_bottom"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="6dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="8dp">
+
+                    <ImageView
+                        android:layout_width="96dp"
+                        android:layout_height="171dp"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/zoom_mode_bottom" />
+
+                    <TextView
+                        android:layout_width="112dp"
+                        android:layout_height="32dp"
+                        android:gravity="center"
+                        android:text="Bottom Zoom"
+                        android:textColor="@android:color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/zoom_mode_top"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="8dp">
+
+                    <ImageView
+                        android:layout_width="96dp"
+                        android:layout_height="171dp"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/zoom_mode_top" />
+
+                    <TextView
+                        android:layout_width="112dp"
+                        android:layout_height="32dp"
+                        android:gravity="center"
+                        android:text="Top Zoom"
+                        android:textColor="@android:color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+
     <include
         layout="@layout/bottom_navigation_bar"
         android:layout_width="match_parent"

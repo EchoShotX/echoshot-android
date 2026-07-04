@@ -120,7 +120,7 @@ class LauncherFragment : Fragment() {
             false,                           // filterOn
             0,                               // transfer
             true,
-            "hybrid",
+            "default",
         )
         findNavController().navigate(action)
     }
@@ -181,7 +181,7 @@ class LauncherFragment : Fragment() {
             false,
             0,
             true,
-            "hybrid",
+            "default",
         )
         findNavController().navigate(action)
     }

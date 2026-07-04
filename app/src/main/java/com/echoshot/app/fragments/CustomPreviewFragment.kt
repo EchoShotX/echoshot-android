@@ -199,23 +199,30 @@ class CustomPreviewFragment : Fragment() {
     private val fragmentBinding get() = _fragmentBinding!!
 
     private val _pipelineLazy = lazy {
-        when (args.pipelineMode) {
+        val pipelineMode = args.pipelineMode
+        Log.i(TAG, "Creating preview pipeline: mode=$pipelineMode (arg=${args.pipelineMode})")
+        when (pipelineMode) {
             "hardware" -> CustomHardwarePipeline(
                 args.width, args.height, args.fps, args.filterOn, args.transfer,
                 args.dynamicRange, characteristics, encoder, originalencoder, fragmentBinding.viewFinder,
                 args.forcePhysicalId  // ✅ 물리 카메라 ID 전달
             )
-            "hybrid" -> CustomHardwarePipelineDefault( // Hybrid 모드는 기본 줌 적용 파이프라인이라고 가정
+            "default", "hybrid" -> CustomHardwarePipelineDefault( // Hybrid 모드는 기본 줌 적용 파이프라인이라고 가정
                 args.width, args.height, args.fps, args.filterOn, args.transfer,
                 args.dynamicRange, characteristics, encoder, originalencoder, fragmentBinding.viewFinder,
                 args.forcePhysicalId  // ✅ 물리 카메라 ID 전달
+            )
+            "bottom" -> CustomHardwarePipelineBottomCrop(
+                args.width, args.height, args.fps, args.filterOn, args.transfer,
+                args.dynamicRange, characteristics, encoder, originalencoder, fragmentBinding.viewFinder,
+                args.forcePhysicalId
             )
             "software" -> SoftwarePipeline(
                 args.width, args.height, args.fps, args.filterOn,
                 args.dynamicRange, characteristics, encoder, fragmentBinding.viewFinder
             )
             else -> throw IllegalArgumentException("❌ 지원하지 않는 pipelineMode: ${args.pipelineMode}")
-        }
+        }.also { Log.i(TAG, "Preview pipeline created: ${it::class.java.simpleName}") }
     }
     private val pipeline: Pipeline get() = _pipelineLazy.value
 
@@ -613,6 +620,8 @@ class CustomPreviewFragment : Fragment() {
                 (pipeline as CustomHardwarePipeline).setZoomLevel(z)
             is CustomHardwarePipelineDefault ->
                 (pipeline as CustomHardwarePipelineDefault).setZoomLevel(z)
+            is CustomHardwarePipelineBottomCrop ->
+                (pipeline as CustomHardwarePipelineBottomCrop).setZoomLevel(z)
         }
     }
     
@@ -913,6 +922,7 @@ class CustomPreviewFragment : Fragment() {
 
         // ✅ 줌 룰러 설정 (사진촬영과 동일한 눈금자 스타일)
         setupZoomRuler()
+        setupPipelineModeSwitch()
 
         // ✅ 모드 스위치: 사진 버튼 → PhotoFragment로 이동
         view.findViewById<View>(R.id.btn_mode_photo)?.setOnClickListener {
@@ -1209,7 +1219,7 @@ class CustomPreviewFragment : Fragment() {
                 // 🔁 hardware 상태에서 nozoom 아이콘 누르면 hybrid로 전환
                 fragmentBinding.iconZoom.setOnClickListener {
                     Toast.makeText(requireContext(), "🔁 1배 촬영 모드로 전환", Toast.LENGTH_SHORT).show()
-                    reloadWithNewPipeline(args.cameraId, "hybrid")
+                    reloadWithNewPipeline(args.cameraId, "default")
                 }
             }
             else -> {
@@ -1614,6 +1624,66 @@ class CustomPreviewFragment : Fragment() {
 
     private fun isCurrentlyRecording(): Boolean {
         return recordingStarted && !recordingComplete
+    }
+
+    private fun setupPipelineModeSwitch() {
+        val isBottomMode = args.pipelineMode == "bottom"
+
+        fragmentBinding.iconZoom.visibility = View.GONE
+        fragmentBinding.iconNozoom.text = if (isBottomMode) "B" else "C"
+        fragmentBinding.iconNozoom.setTextColor(ContextCompat.getColor(requireContext(), android.R.color.white))
+
+        fragmentBinding.zoomModeOverlay.visibility = View.GONE
+        fragmentBinding.zoomModeOverlay.setOnClickListener {
+            fragmentBinding.zoomModeOverlay.visibility = View.GONE
+        }
+        fragmentBinding.zoomModePanel.setOnClickListener {
+            // Keep taps inside the panel from closing the overlay.
+        }
+
+        fun switchTo(mode: String) {
+            val currentMode = args.pipelineMode
+            val alreadySelected = currentMode == mode || (mode == "default" && currentMode == "hybrid")
+            if (alreadySelected) {
+                fragmentBinding.zoomModeOverlay.visibility = View.GONE
+                return
+            }
+
+            if (isCurrentlyRecording()) {
+                Toast.makeText(requireContext(), "Cannot switch pipeline while recording", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            Log.i(TAG, "Switching preview pipeline: from=$currentMode to=$mode")
+            reloadWithNewPipeline(args.cameraId, mode, args.forcePhysicalId)
+        }
+
+        fun styleOption(view: View, enabled: Boolean, selected: Boolean) {
+            view.isEnabled = enabled
+            view.alpha = if (enabled) 1.0f else 0.42f
+            view.background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(Color.argb(if (selected) 230 else 190, 24, 24, 24))
+                setStroke(
+                    dp(if (selected) 3 else 1),
+                    if (selected) Color.YELLOW else Color.argb(120, 255, 255, 255)
+                )
+            }
+        }
+
+        styleOption(fragmentBinding.zoomModeDefault, enabled = false, selected = false)
+        styleOption(fragmentBinding.zoomModeCenter, enabled = true, selected = !isBottomMode)
+        styleOption(fragmentBinding.zoomModeBottom, enabled = true, selected = isBottomMode)
+        styleOption(fragmentBinding.zoomModeTop, enabled = false, selected = false)
+
+        fragmentBinding.iconNozoom.setOnClickListener {
+            fragmentBinding.zoomModeOverlay.visibility =
+                if (fragmentBinding.zoomModeOverlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
+        fragmentBinding.zoomModeDefault.setOnClickListener(null)
+        fragmentBinding.zoomModeCenter.setOnClickListener { switchTo("default") }
+        fragmentBinding.zoomModeBottom.setOnClickListener { switchTo("bottom") }
+        fragmentBinding.zoomModeTop.setOnClickListener(null)
     }
 
     // ✅ 세션 닫힘 상태 확인 헬퍼 함수
@@ -2858,7 +2928,7 @@ class CustomPreviewFragment : Fragment() {
             filterOn = false,
             transfer = 0,
             useHardware = true,
-            pipelineMode = "hybrid"
+            pipelineMode = "default"
         )
     }
 
@@ -2878,7 +2948,7 @@ class CustomPreviewFragment : Fragment() {
         val filterOn: Boolean = false,
         val transfer: Int = 0,
         val useHardware: Boolean = true,
-        val pipelineMode: String = "hybrid"
+        val pipelineMode: String = "default"
     )
 
     fun reloadWithNewPipeline(

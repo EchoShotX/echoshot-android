@@ -225,7 +225,7 @@ class PermissionsFragment : Fragment() {
             dynamicRange,
             colorSpace,
             supportsPreviewStabilization,
-            false, 0, false, 0, true, "hybrid"
+            false, 0, false, 0, true, "default"
         )
         navController.navigate(action)
     }
@@ -235,7 +235,7 @@ class PermissionsFragment : Fragment() {
             cameraId, 1920, 1080, 30,
             android.hardware.camera2.params.DynamicRangeProfiles.STANDARD,
             android.hardware.camera2.params.ColorSpaceProfiles.UNSPECIFIED,
-            false, false, 0, false, 0, true, "hybrid"
+            false, false, 0, false, 0, true, "default"
         )
         navController.navigate(action)
     }
@@ -329,7 +329,7 @@ class PermissionsFragment : Fragment() {
             false,  // filterOn
             0,      // transfer
             true,   // useHardware
-            "hybrid" // pipelineMode
+            "default" // pipelineMode
         )
         navController.navigate(action)
     }
@@ -388,7 +388,7 @@ class PermissionsFragment : Fragment() {
             false,
             0,
             true,
-            "hybrid"
+            "default"
         )
         navController.navigate(action)
     }

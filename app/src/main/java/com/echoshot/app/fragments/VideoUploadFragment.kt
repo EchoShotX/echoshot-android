@@ -571,7 +571,7 @@ class VideoUploadFragment : Fragment() {
             false,
             0,
             true,
-            "hybrid"
+            "default"
         ).apply {
             startBasic = false
         }
@@ -598,7 +598,7 @@ class VideoUploadFragment : Fragment() {
             false,
             0,
             true,
-            "hybrid"
+            "default"
         )
         findNavController().navigate(action)
     }
@@ -687,4 +687,3 @@ class VideoUploadFragment : Fragment() {
         }
     }
 }
-

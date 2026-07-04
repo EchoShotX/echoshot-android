@@ -375,7 +375,7 @@ class ProfileFragment : Fragment() {
             false,
             0,
             true,
-            "hybrid"
+            "default"
         ).apply {
             startBasic = false
         }
@@ -468,7 +468,7 @@ class ProfileFragment : Fragment() {
             false,  // filterOn
             0,      // transfer
             true,   // useHardware
-            "hybrid" // pipelineMode
+            "default" // pipelineMode
         )
         findNavController().navigate(action)
     }
@@ -487,7 +487,7 @@ class ProfileFragment : Fragment() {
             false,
             0,
             true,
-            "hybrid"
+            "default"
         )
         findNavController().navigate(action)
     }
