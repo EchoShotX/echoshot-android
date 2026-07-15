@@ -166,6 +166,7 @@ class MakeAutoDetactionFragment : DialogFragment() {
 
         // 시작 버튼
         btnStart.setOnClickListener {
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "composition_start", "composition_type" to "auto")
             val paddingFactor = when (toggleCrop.checkedButtonId) {
                 R.id.btnCenterMode -> 3.5f   // 인물 중심 (상체 기준)
                 R.id.btnWideMode   -> 5f   // 와이드 (상체 기준)

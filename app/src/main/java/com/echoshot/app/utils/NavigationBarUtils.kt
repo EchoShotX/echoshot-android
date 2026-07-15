@@ -137,6 +137,11 @@ object NavigationBarUtils {
         // 팬캠 에딧 클릭 - 배포모드 여부와 관계없이 항상 활성화
         navArchive?.setOnClickListener {
             if (currentPage != "upload") {
+                com.echoshot.app.AnalyticsTracker.log(
+                    rootView.context,
+                    "edit_nav_click",
+                    "source_page" to currentPage
+                )
                 onArchiveClick?.invoke()
             }
         }

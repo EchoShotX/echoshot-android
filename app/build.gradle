@@ -4,6 +4,7 @@ apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-kapt'
 apply plugin: "androidx.navigation.safeargs"
 apply plugin: 'com.chaquo.python'
+apply plugin: 'com.google.gms.google-services'
 // 상단 somewhere에 아래 코드 추가 또는 수정
 
 android {
@@ -15,8 +16,8 @@ android {
         applicationId "com.echoshot.app"
         minSdkVersion 26
         targetSdkVersion 35
-        versionCode 22
-        versionName "1.2.1"
+        versionCode 23
+        versionName "1.2.2"
 
         ndk {
             abiFilters "arm64-v8a", "armeabi-v7a" // , "x86", "x86_64"
@@ -103,6 +104,9 @@ chaquopy {
 }
 
 dependencies {
+    implementation platform('com.google.firebase:firebase-bom:34.16.0')
+    implementation 'com.google.firebase:firebase-analytics'
+
     implementation project(':utils')
 
     // Kotlin lang

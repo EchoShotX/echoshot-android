@@ -18,7 +18,7 @@
 
 buildscript {
     // Top-level variables used for versioning
-    ext.kotlin_version = '1.8.0'
+    ext.kotlin_version = '2.2.0'
     ext.java_version = JavaVersion.VERSION_17
 
     repositories {
@@ -30,6 +30,7 @@ buildscript {
         classpath 'com.android.tools.build:gradle:8.7.3'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
         classpath 'androidx.navigation:navigation-safe-args-gradle-plugin:2.5.0'
+        classpath 'com.google.gms:google-services:4.5.0'
         classpath "com.chaquo.python:gradle:16.1.0" // 16KB 페이지 크기 지원
 
     }

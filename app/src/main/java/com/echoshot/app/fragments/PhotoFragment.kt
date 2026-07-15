@@ -372,7 +372,10 @@ class PhotoFragment : Fragment() {
         val captureButton: View = view.findViewById(R.id.capture_button)
         val switchCameraButton: View = view.findViewById(R.id.switch_camera_button)
 
-        captureButton.setOnClickListener { takePhoto() }
+        captureButton.setOnClickListener {
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "capture_button_click", "media_type" to "photo", "camera_facing" to "back")
+            takePhoto()
+        }
         switchCameraButton.setOnClickListener {
             // 전면 카메라 프래그먼트로 이동
             val a = navArgs
@@ -426,6 +429,7 @@ class PhotoFragment : Fragment() {
         }
 
         view.findViewById<ImageButton>(R.id.gallery_button)?.setOnClickListener {
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "gallery_open", "source_screen" to "photo_back")
             openGallery()
         }
 
@@ -787,6 +791,7 @@ class PhotoFragment : Fragment() {
                 }
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    com.echoshot.app.AnalyticsTracker.log(requireContext(), "capture_complete", "media_type" to "photo", "camera_facing" to "back")
                     Toast.makeText(requireContext(), getString(R.string.photo_saved), Toast.LENGTH_SHORT).show()
                 }
             }

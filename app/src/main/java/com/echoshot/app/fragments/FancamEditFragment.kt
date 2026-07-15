@@ -80,7 +80,10 @@ class FancamEditFragment : Fragment() {
     private val videoPickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        uri?.let { showVideoPreviewDialog(it) }
+        uri?.let {
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "edit_video_selected")
+            showVideoPreviewDialog(it)
+        }
     }
 
     override fun onCreateView(
@@ -121,6 +124,7 @@ class FancamEditFragment : Fragment() {
 
         // 동영상 편집 시작 버튼 클릭
         btnStartEdit?.setOnClickListener {
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "edit_video_picker_open")
             videoPickerLauncher.launch("video/*")
         }
 
@@ -282,6 +286,8 @@ class FancamEditFragment : Fragment() {
                         .apply { window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)) }
 
                     btnStart.setOnClickListener {
+                        com.echoshot.app.AnalyticsTracker.log(requireContext(), "edit_start_click")
+                        com.echoshot.app.AnalyticsTracker.log(requireContext(), "composition_start", "composition_type" to "person_select")
                         var targetRect: android.graphics.RectF? = null
                         if (overlay != null && thumbnail != null) {
                             val rView = overlay.getRectViewSpace()

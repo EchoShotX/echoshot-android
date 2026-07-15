@@ -137,6 +137,7 @@ class HybridPickerDialogFragment : DialogFragment() {
         }
 
         startButton.setOnClickListener {
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "composition_start", "composition_type" to "person_select")
             val rView = overlay.getRectViewSpace()
             val rBmp = mapViewToBitmap(iv, rView) ?: run {
                 Toast.makeText(requireContext(), "좌표 변환 실패", Toast.LENGTH_SHORT).show()

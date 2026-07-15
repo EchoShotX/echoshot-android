@@ -491,6 +491,7 @@ class CustomFrontPreviewFragment : Fragment() {
                         Toast.makeText(requireContext(), "후면 카메라를 찾을 수 없습니다.", Toast.LENGTH_SHORT).show()
                         return@setOnClickListener
                     }
+                    com.echoshot.app.AnalyticsTracker.log(requireContext(), "camera_setting_change", "setting_name" to "camera_facing", "setting_value" to "back", "camera_facing" to "front")
 
                     val action = CustomFrontPreviewFragmentDirections.actionCustomFrontPreviewToCustomPreview(
                         backId,
@@ -549,6 +550,7 @@ class CustomFrontPreviewFragment : Fragment() {
         // 갤러리 버튼 원래 상태 저장
         galleryButtonOriginalDrawable = fragmentBinding.galleryButton.drawable
         galleryButtonOriginalClickListener = View.OnClickListener {
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "gallery_open", "source_screen" to "video_front")
             Toast.makeText(requireContext(), "갤러리로 이동", Toast.LENGTH_SHORT).show()
 
             val action = CustomFrontPreviewFragmentDirections
@@ -824,6 +826,7 @@ class CustomFrontPreviewFragment : Fragment() {
 
         // 8) MediaScanner 등록 + 썸네일만 갱신 (외부 플레이어는 열지 않음)
         if (shutOk) {
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "capture_complete", "media_type" to "video", "camera_facing" to "front")
             val mime = MimeTypeMap.getSingleton()
                 .getMimeTypeFromExtension(outputFile.extension) ?: "video/mp4"
 
@@ -957,6 +960,7 @@ class CustomFrontPreviewFragment : Fragment() {
         // 프리뷰 시작 직후에 추가 (뷰가 유효할 때만)
         binding.captureButton.setOnClickListener {
             if (!recordingStarted) {
+                com.echoshot.app.AnalyticsTracker.log(requireContext(), "capture_button_click", "media_type" to "video", "camera_facing" to "front")
                 startFrontRecording()
             } else {
                 // ✅ 디바운스: 짧은 시간 내 중복 클릭 방지
@@ -966,6 +970,7 @@ class CustomFrontPreviewFragment : Fragment() {
                     return@setOnClickListener
                 }
                 lastStopClick = now
+                com.echoshot.app.AnalyticsTracker.log(requireContext(), "capture_stop_click", "media_type" to "video", "camera_facing" to "front")
                 
                 lifecycleScope.launch {
                     stopFrontRecording()

@@ -598,6 +598,7 @@ class GalleryFragment : Fragment() {
                                     .newInstance(v.uuid)
                                     .show(childFragmentManager, "croppedPager")
                             } else {
+                                com.echoshot.app.AnalyticsTracker.log(requireContext(), "gallery_video_play", "gallery_mode" to mode.name.lowercase())
                                 findNavController().navigate(
                                     GalleryFragmentDirections
                                         .actionGalleryFragmentToPreviewPlayerFragment(v.uri.toString())
@@ -614,6 +615,7 @@ class GalleryFragment : Fragment() {
                         true
                     },
                     onLockedClick = { v ->
+                        com.echoshot.app.AnalyticsTracker.log(requireContext(), "gallery_locked_click", "gallery_mode" to mode.name.lowercase())
                         if (mode == GalleryMode.EXTENDED) showLockedOverlay(v.uri)
                         // BASIC에선 잠금 개념 없음
                     }
@@ -928,6 +930,7 @@ class GalleryFragment : Fragment() {
             .create().apply { window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)) }
 
         btnAuto.setOnClickListener {
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "composition_type_select", "composition_type" to "auto")
             dialog.dismiss()
             // 🔽 새 독립 다이얼로그 프래그먼트 호출
             MakeAutoDetactionFragment
@@ -936,6 +939,7 @@ class GalleryFragment : Fragment() {
         }
 
         btnSot.setOnClickListener {
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "composition_type_select", "composition_type" to "person_select")
             dialog.dismiss()
             // ✅ 하이브리드 프로세서 실행 (YOLO + Pose + Face)
             HybridPickerDialogFragment
@@ -1238,10 +1242,13 @@ class GalleryFragment : Fragment() {
                                             .newInstance(v.uuid)
                                             .show(childFragmentManager, "croppedPager")
                                     }
-                                    else -> findNavController().navigate(
-                                        GalleryFragmentDirections
-                                            .actionGalleryFragmentToPreviewPlayerFragment(v.uri.toString())
-                                    )
+                                    else -> {
+                                        com.echoshot.app.AnalyticsTracker.log(requireContext(), "gallery_video_play", "gallery_mode" to mode.name.lowercase())
+                                        findNavController().navigate(
+                                            GalleryFragmentDirections
+                                                .actionGalleryFragmentToPreviewPlayerFragment(v.uri.toString())
+                                        )
+                                    }
                                 }
                             }
                         },
@@ -1253,7 +1260,10 @@ class GalleryFragment : Fragment() {
                             }
                             true
                         },
-                        onLockedClick = { v -> showLockedOverlay(v.uri) }
+                        onLockedClick = { v ->
+                            com.echoshot.app.AnalyticsTracker.log(requireContext(), "gallery_locked_click", "gallery_mode" to mode.name.lowercase())
+                            showLockedOverlay(v.uri)
+                        }
                     )
                 }
                 // ✅ 새로고침 완료 후 로딩 인디케이터 숨기기

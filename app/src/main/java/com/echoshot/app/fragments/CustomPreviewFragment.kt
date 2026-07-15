@@ -1117,6 +1117,7 @@ class CustomPreviewFragment : Fragment() {
             Log.d(TAG, "버튼 눌림")
 
             if (!recordingStarted) {
+                com.echoshot.app.AnalyticsTracker.log(requireContext(), "capture_button_click", "media_type" to "video", "camera_facing" to "back")
                 startRecording()
                 Log.d(TAG, "녹화 시작")
             } else {
@@ -1127,6 +1128,7 @@ class CustomPreviewFragment : Fragment() {
                     return@setOnClickListener
                 }
                 lastStopClick = now
+                com.echoshot.app.AnalyticsTracker.log(requireContext(), "capture_stop_click", "media_type" to "video", "camera_facing" to "back")
                 
                 lifecycleScope.launch {
                     stopRecording()
@@ -1331,6 +1333,7 @@ class CustomPreviewFragment : Fragment() {
         // 갤러리 버튼 원래 상태 저장
         galleryButtonOriginalDrawable = fragmentBinding.galleryButton.drawable
         galleryButtonOriginalClickListener = View.OnClickListener {
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "gallery_open", "source_screen" to "video_back")
             val action = CustomPreviewFragmentDirections
                 .actionCustomPreviewFragmentToGalleryFragment(
                     args.cameraId,
@@ -1688,6 +1691,13 @@ class CustomPreviewFragment : Fragment() {
                 setZoomModeOverlayVisible(false)
                 return
             }
+            com.echoshot.app.AnalyticsTracker.log(
+                requireContext(),
+                "camera_setting_change",
+                "setting_name" to "composition_mode",
+                "setting_value" to mode,
+                "camera_facing" to "back"
+            )
 
             if (isCurrentlyRecording()) {
                 Toast.makeText(requireContext(), "Cannot switch pipeline while recording", Toast.LENGTH_SHORT).show()
@@ -2076,6 +2086,7 @@ class CustomPreviewFragment : Fragment() {
                 null,
                 null
             )
+            com.echoshot.app.AnalyticsTracker.log(requireContext(), "capture_complete", "media_type" to "video", "camera_facing" to "back")
             Log.d(TAG, "✅ 모든 비디오 파일이 MediaScanner에 등록되었습니다.")
 
             // — 로그 플러시 & 스트림 닫기
@@ -2233,7 +2244,10 @@ class CustomPreviewFragment : Fragment() {
                 // 🎛️ 녹화 중 아님 → 전면 전환 버튼
                 btn.setImageResource(R.drawable.ic_camera_switch) // 전면 전환 아이콘
                 btn.setColorFilter(ContextCompat.getColor(requireContext(), android.R.color.white))
-                btn.setOnClickListener { navigateToFrontPreview() }
+                btn.setOnClickListener {
+                    com.echoshot.app.AnalyticsTracker.log(requireContext(), "camera_setting_change", "setting_name" to "camera_facing", "setting_value" to "front", "camera_facing" to "back")
+                    navigateToFrontPreview()
+                }
             } else {
                 // 🎥 녹화 중 → 오토줌 토글
                 btn.setImageResource(R.drawable.auto_zoom_btn) // 기존 오토줌 아이콘
@@ -2245,6 +2259,13 @@ class CustomPreviewFragment : Fragment() {
                 )
                 btn.setOnClickListener {
                     autoZoom.toggle()
+                    com.echoshot.app.AnalyticsTracker.log(
+                        requireContext(),
+                        "camera_setting_change",
+                        "setting_name" to "auto_zoom",
+                        "setting_value" to if (autoZoom.isActive) "on" else "off",
+                        "camera_facing" to "back"
+                    )
                     btn.setColorFilter(
                         ContextCompat.getColor(
                             requireContext(),
@@ -2376,6 +2397,9 @@ class CustomPreviewFragment : Fragment() {
 
         // 광각 버튼
         fragmentBinding.btnWide.setOnClickListener {
+            if (isTeleCurrent()) {
+                com.echoshot.app.AnalyticsTracker.log(requireContext(), "camera_setting_change", "setting_name" to "lens", "setting_value" to "wide", "camera_facing" to "back")
+            }
             // ✅ LauncherFragment처럼 와이드로 전환할 때는 논리 카메라 사용 (forcePhysicalId = null)
             // 망원에서 와이드로 돌아올 때는 논리 카메라로 전환하여 안정적인 상태 보장
             if (args.forcePhysicalId != null) {
@@ -2392,6 +2416,9 @@ class CustomPreviewFragment : Fragment() {
 
         // 망원 버튼
         fragmentBinding.btnTele.setOnClickListener {
+            if (!isTeleCurrent()) {
+                com.echoshot.app.AnalyticsTracker.log(requireContext(), "camera_setting_change", "setting_name" to "lens", "setting_value" to "tele", "camera_facing" to "back")
+            }
             val telePhysicalId = getBackTelePhysicalId()
             if (telePhysicalId == null) {
                 lensMode = LensMode.TELE
