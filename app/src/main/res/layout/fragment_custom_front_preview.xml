@@ -20,6 +20,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/fullratio"
+            android:visibility="gone"
             android:contentDescription="Fullratio" />
 
         <Space
@@ -32,6 +33,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/nozoom"
+            android:visibility="gone"
             android:contentDescription="Nozoom_Mode" />
 
         <Space
@@ -44,6 +46,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/zoom"
+            android:visibility="gone"
             android:contentDescription="Zoom_Mode" />
 
         <Space
@@ -56,6 +59,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/setting"
+            android:visibility="gone"
             app:tint="@android:color/white"
             android:contentDescription="Setting" />
     </LinearLayout>

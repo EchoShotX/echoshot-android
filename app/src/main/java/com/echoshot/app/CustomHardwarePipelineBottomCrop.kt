@@ -1397,17 +1397,8 @@ class CustomHardwarePipelineBottomCrop (width: Int, height: Int, fps: Int, filte
         private fun copyRenderToEncode(ptsNs: Long) {
             EGL14.eglMakeCurrent(eglDisplay, eglOriginalEncoderSurface, eglRenderSurface, eglContext)
 
-            var viewportWidth = width
-            var viewportHeight = height
-
-            /** Swap width and height if the camera is rotated on its side. */
-            if (orientation == 90 || orientation == 270) {
-                viewportWidth = height
-                viewportHeight = width
-            }
-
-
-            copyTexture(renderTexId, renderTexture, Rect(0, 0, viewportWidth, viewportHeight),
+            val encoderViewport = getCurrentDrawSurfaceRect()
+            copyTexture(renderTexId, renderTexture, encoderViewport,
                 renderToEncodeShaderProgram!!, false)
             EGLExt.eglPresentationTimeANDROID(eglDisplay, eglOriginalEncoderSurface, ptsNs)
             encoder.frameAvailable()
@@ -1421,16 +1412,8 @@ class CustomHardwarePipelineBottomCrop (width: Int, height: Int, fps: Int, filte
         private fun copyRenderToEncodeOriginal(ptsNs: Long) {
             EGL14.eglMakeCurrent(eglDisplay, eglZoomedEncoderSurface, eglZoomedEncoderSurface, eglContext) // 여기 수정 필요
 
-            var viewportWidth = width
-            var viewportHeight = height
-
-            /** Swap width and height if the camera is rotated on its side. */
-            if (orientation == 90 || orientation == 270) {
-                viewportWidth = height
-                viewportHeight = width
-            }
-
-            copyTextureOriginal(renderTexId, renderTexture, Rect(0, 0, viewportWidth, viewportHeight),
+            val encoderViewport = getCurrentDrawSurfaceRect()
+            copyTextureOriginal(renderTexId, renderTexture, encoderViewport,
                 renderToEncodeShaderProgram!!, false)
 
             EGLExt.eglPresentationTimeANDROID(eglDisplay, eglOriginalEncoderSurface, ptsNs)
@@ -1439,6 +1422,15 @@ class CustomHardwarePipelineBottomCrop (width: Int, height: Int, fps: Int, filte
             presentedOrig++
             lastPtsNs = ptsNs
             Log.d("RenderHandler", "🎥 copyRenderToEncodeOriginal called")
+        }
+
+        private fun getCurrentDrawSurfaceRect(): Rect {
+            val surfaceWidth = IntArray(1)
+            val surfaceHeight = IntArray(1)
+            val currentDrawSurface = EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW)
+            EGL14.eglQuerySurface(eglDisplay, currentDrawSurface, EGL14.EGL_WIDTH, surfaceWidth, 0)
+            EGL14.eglQuerySurface(eglDisplay, currentDrawSurface, EGL14.EGL_HEIGHT, surfaceHeight, 0)
+            return Rect(0, 0, surfaceWidth[0], surfaceHeight[0])
         }
 
         @RequiresApi(Build.VERSION_CODES.TIRAMISU)

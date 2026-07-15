@@ -325,8 +325,8 @@ private val EGL_SMPTE2086_WHITE_POINT_Y_EXT            = 0x3348
 private val EGL_SMPTE2086_MAX_LUMINANCE_EXT            = 0x3349
 private val EGL_SMPTE2086_MIN_LUMINANCE_EXT            = 0x334A
 
-class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn: Boolean, transfer: Int,
-                              dynamicRange: Long, characteristics: CameraCharacteristics, encoder: EncoderWrapper, private val originalEncoder: EncoderWrapper,
+class CustomHardwarePipelineSingle (width: Int, height: Int, fps: Int, filterOn: Boolean, transfer: Int,
+                              dynamicRange: Long, characteristics: CameraCharacteristics, encoder: EncoderWrapper,
                               viewFinder: AutoFitSurfaceView, private val physicalCameraId: String? = null) : Pipeline(width, height, fps, filterOn, dynamicRange,
     characteristics, encoder, viewFinder) {
     private val renderThread: HandlerThread by lazy {
@@ -336,7 +336,7 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
     }
 
     private val renderHandler = RenderHandler(renderThread.getLooper(),
-        width, height, fps, filterOn, transfer, dynamicRange, characteristics, encoder, originalEncoder, viewFinder, physicalCameraId)
+        width, height, fps, filterOn, transfer, dynamicRange, characteristics, encoder, viewFinder, physicalCameraId)
 
     override fun createRecordRequest(session: CameraCaptureSession,
                                      previewStabilization: Boolean) : CaptureRequest {
@@ -380,9 +380,8 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
     }
 
     override fun actionDown(zoomedSurface: Surface, originalSurface: Surface) {
-        val pair = Pair(zoomedSurface, originalSurface)
         renderHandler.sendMessage(renderHandler.obtainMessage(
-            RenderHandler.MSG_ACTION_DOWN, pair))
+            RenderHandler.MSG_ACTION_DOWN, 0, 0, zoomedSurface))
     }
 
 
@@ -439,7 +438,7 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
 
     private class RenderHandler(looper: Looper, width: Int, height: Int, fps: Int,
                                 filterOn: Boolean, transfer: Int, dynamicRange: Long,
-                                characteristics: CameraCharacteristics, encoder: EncoderWrapper, private val originalEncoder: EncoderWrapper,
+                                characteristics: CameraCharacteristics, encoder: EncoderWrapper,
                                 viewFinder: AutoFitSurfaceView, private val physicalCameraId: String? = null): Handler(looper),
         SurfaceTexture.OnFrameAvailableListener {
         companion object {
@@ -554,25 +553,11 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
         }
 
         private fun finishAndPadThenEos() {
-            var padPts = if (lastPtsNs > 0) lastPtsNs else ptsBaseNs
-
-            while (presentedOrig < presentedZoom) {
-                padPts += frameDurNs
-                copyRenderToEncodeOriginal(padPts)   // ✅ 기존 함수명 사용
-                Log.d("RenderHandler", "🧩 pad original at pts=$padPts")
-            }
-            while (presentedZoom < presentedOrig) {
-                padPts += frameDurNs
-                copyRenderToEncode(padPts)           // ✅ 기존 함수명 사용
-                Log.d("RenderHandler", "🧩 pad zoomed at pts=$padPts")
-            }
-
             // GPU 작업 마무리 후 EOS
-            glFinish()                               // ✅ static import 사용
-            try { originalEncoder.signalEndOfInput() } catch (_: Throwable) {}
+            glFinish()
             try { encoder.signalEndOfInput() } catch (_: Throwable) {}
 
-            Log.d("RenderHandler", "🏁 finishAndPadThenEos done: orig=$presentedOrig, zoom=$presentedZoom")
+            Log.d("RenderHandler", "🏁 finishAndPadThenEos done: single=$presentedZoom")
         }
 
 
@@ -1414,7 +1399,7 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
                 renderToEncodeShaderProgram!!, false)
 
             EGLExt.eglPresentationTimeANDROID(eglDisplay, eglOriginalEncoderSurface, ptsNs)
-            originalEncoder.frameAvailable()
+            encoder.frameAvailable()
             EGL14.eglSwapBuffers(eglDisplay, eglZoomedEncoderSurface)
             presentedOrig++
             lastPtsNs = ptsNs
@@ -1550,12 +1535,8 @@ class CustomHardwarePipelineDefault (width: Int, height: Int, fps: Int, filterOn
 
             // 4) 인코딩 (같은 ptsNs로 원본/줌 둘 다 찍기)
             if (currentlyRecording) {
-                // 원본 트랙(줌 미적용)
+                // Single pipeline: save only the visible zoomed output.
                 if (eglOriginalEncoderSurface != EGL14.EGL_NO_SURFACE) {
-                    copyRenderToEncodeOriginal(ptsNs)
-                }
-                // 줌 트랙(렌더텍스처, 줌 적용 상태)
-                if (eglZoomedEncoderSurface != EGL14.EGL_NO_SURFACE) {
                     copyRenderToEncode(ptsNs)
                 }
             }

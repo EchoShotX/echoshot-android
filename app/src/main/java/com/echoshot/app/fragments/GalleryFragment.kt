@@ -797,7 +797,7 @@ class GalleryFragment : Fragment() {
                 val uuid = parts[1]
                 val type = parts[2] // zoomed | original | cropped | add
                 // "add" 타입은 FancamEdit 전용 영상 → 확장 갤러리에 포함하지 않음
-                if (type == "add") continue
+                if (type !in setOf("zoomed", "original", "cropped")) continue
                 val uri  = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
                 items += MediaItem(uri, c.getLong(dateCol), c.getLong(durCol), uuid, type)
             }

@@ -212,7 +212,17 @@ class CustomPreviewFragment : Fragment() {
                 args.dynamicRange, characteristics, encoder, originalencoder, fragmentBinding.viewFinder,
                 args.forcePhysicalId  // ✅ 물리 카메라 ID 전달
             )
+            "single" -> CustomHardwarePipelineSingle(
+                args.width, args.height, args.fps, args.filterOn, args.transfer,
+                args.dynamicRange, characteristics, encoder, fragmentBinding.viewFinder,
+                args.forcePhysicalId
+            )
             "bottom" -> CustomHardwarePipelineBottomCrop(
+                args.width, args.height, args.fps, args.filterOn, args.transfer,
+                args.dynamicRange, characteristics, encoder, originalencoder, fragmentBinding.viewFinder,
+                args.forcePhysicalId
+            )
+            "top" -> CustomHardwarePipelineTopCrop(
                 args.width, args.height, args.fps, args.filterOn, args.transfer,
                 args.dynamicRange, characteristics, encoder, originalencoder, fragmentBinding.viewFinder,
                 args.forcePhysicalId
@@ -266,7 +276,9 @@ class CustomPreviewFragment : Fragment() {
 
     /** [EncoderWrapper] utility class */
 
-    private val encoder: EncoderWrapper by lazy { createEncoder("zoomed") }
+    private val encoder: EncoderWrapper by lazy {
+        createEncoder(if (isSinglePipelineMode()) "single" else "zoomed")
+    }
     private val originalencoder: EncoderWrapper by lazy { createEncoder("original") }
 
     /** [HandlerThread] where all camera operations run */
@@ -618,10 +630,14 @@ class CustomPreviewFragment : Fragment() {
         when (pipeline) {
             is CustomHardwarePipeline ->
                 (pipeline as CustomHardwarePipeline).setZoomLevel(z)
+            is CustomHardwarePipelineSingle ->
+                (pipeline as CustomHardwarePipelineSingle).setZoomLevel(z)
             is CustomHardwarePipelineDefault ->
                 (pipeline as CustomHardwarePipelineDefault).setZoomLevel(z)
             is CustomHardwarePipelineBottomCrop ->
                 (pipeline as CustomHardwarePipelineBottomCrop).setZoomLevel(z)
+            is CustomHardwarePipelineTopCrop ->
+                (pipeline as CustomHardwarePipelineTopCrop).setZoomLevel(z)
         }
     }
     
@@ -1361,10 +1377,6 @@ class CustomPreviewFragment : Fragment() {
         fragmentBinding.poseOverlayView.visibility = View.GONE
 
         // ✅ 설정 버튼 클릭 시 포즈 오버레이 토글
-        fragmentBinding.iconSetting.setOnClickListener {
-            showPoseOverlay = !showPoseOverlay
-            fragmentBinding.poseOverlayView.visibility = if (showPoseOverlay) View.VISIBLE else View.GONE
-        }
     }
 
 
@@ -1626,16 +1638,44 @@ class CustomPreviewFragment : Fragment() {
         return recordingStarted && !recordingComplete
     }
 
-    private fun setupPipelineModeSwitch() {
-        val isBottomMode = args.pipelineMode == "bottom"
+    private fun isSinglePipelineMode(): Boolean {
+        return args.pipelineMode == "single"
+    }
 
+    private fun setZoomModeOverlayVisible(visible: Boolean) {
+        fragmentBinding.zoomModeOverlay.visibility = if (visible) View.VISIBLE else View.GONE
+
+        if (visible) {
+            fragmentBinding.lensSelector.visibility = View.GONE
+            fragmentBinding.zoomLevelText.visibility = View.GONE
+        } else {
+            if (!isCurrentlyRecording() && getBackTelePhysicalId() != null) {
+                showLensHUD()
+            } else {
+                fragmentBinding.lensSelector.visibility = View.GONE
+                fragmentBinding.zoomLevelText.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun setupPipelineModeSwitch() {
+        val isSingleMode = args.pipelineMode == "single"
+        val isBottomMode = args.pipelineMode == "bottom"
+        val isTopMode = args.pipelineMode == "top"
+
+        fragmentBinding.iconNozoom.visibility = View.GONE
         fragmentBinding.iconZoom.visibility = View.GONE
-        fragmentBinding.iconNozoom.text = if (isBottomMode) "B" else "C"
-        fragmentBinding.iconNozoom.setTextColor(ContextCompat.getColor(requireContext(), android.R.color.white))
+        fragmentBinding.iconSetting.text = when {
+            isSingleMode -> "S"
+            isBottomMode -> "B"
+            isTopMode -> "T"
+            else -> "C"
+        }
+        fragmentBinding.iconSetting.setTextColor(ContextCompat.getColor(requireContext(), android.R.color.white))
 
         fragmentBinding.zoomModeOverlay.visibility = View.GONE
         fragmentBinding.zoomModeOverlay.setOnClickListener {
-            fragmentBinding.zoomModeOverlay.visibility = View.GONE
+            setZoomModeOverlayVisible(false)
         }
         fragmentBinding.zoomModePanel.setOnClickListener {
             // Keep taps inside the panel from closing the overlay.
@@ -1645,7 +1685,7 @@ class CustomPreviewFragment : Fragment() {
             val currentMode = args.pipelineMode
             val alreadySelected = currentMode == mode || (mode == "default" && currentMode == "hybrid")
             if (alreadySelected) {
-                fragmentBinding.zoomModeOverlay.visibility = View.GONE
+                setZoomModeOverlayVisible(false)
                 return
             }
 
@@ -1671,19 +1711,18 @@ class CustomPreviewFragment : Fragment() {
             }
         }
 
-        styleOption(fragmentBinding.zoomModeDefault, enabled = false, selected = false)
-        styleOption(fragmentBinding.zoomModeCenter, enabled = true, selected = !isBottomMode)
+        styleOption(fragmentBinding.zoomModeDefault, enabled = true, selected = isSingleMode)
+        styleOption(fragmentBinding.zoomModeCenter, enabled = true, selected = !isSingleMode && !isBottomMode && !isTopMode)
         styleOption(fragmentBinding.zoomModeBottom, enabled = true, selected = isBottomMode)
-        styleOption(fragmentBinding.zoomModeTop, enabled = false, selected = false)
+        styleOption(fragmentBinding.zoomModeTop, enabled = true, selected = isTopMode)
 
-        fragmentBinding.iconNozoom.setOnClickListener {
-            fragmentBinding.zoomModeOverlay.visibility =
-                if (fragmentBinding.zoomModeOverlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        fragmentBinding.iconSetting.setOnClickListener {
+            setZoomModeOverlayVisible(fragmentBinding.zoomModeOverlay.visibility != View.VISIBLE)
         }
-        fragmentBinding.zoomModeDefault.setOnClickListener(null)
+        fragmentBinding.zoomModeDefault.setOnClickListener { switchTo("single") }
         fragmentBinding.zoomModeCenter.setOnClickListener { switchTo("default") }
         fragmentBinding.zoomModeBottom.setOnClickListener { switchTo("bottom") }
-        fragmentBinding.zoomModeTop.setOnClickListener(null)
+        fragmentBinding.zoomModeTop.setOnClickListener { switchTo("top") }
     }
 
     // ✅ 세션 닫힘 상태 확인 헬퍼 함수
@@ -1843,7 +1882,11 @@ class CustomPreviewFragment : Fragment() {
         isStopping.set(false)
 
         requireActivity().requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
-        pipeline.actionDown(encoderSurface,originalencoderSurface)
+        if (isSinglePipelineMode()) {
+            pipeline.actionDown(encoderSurface)
+        } else {
+            pipeline.actionDown(encoderSurface,originalencoderSurface)
+        }
 
         // — 여기에 프레임 타임스탬프 초기화
         frameTimestamps.clear()
@@ -1855,7 +1898,9 @@ class CustomPreviewFragment : Fragment() {
 
         recordingStarted = true
         encoder.start()
-        originalencoder.start()
+        if (!isSinglePipelineMode()) {
+            originalencoder.start()
+        }
         cvRecordingStarted.open()
         pipeline.startRecording()
         
@@ -1941,7 +1986,9 @@ class CustomPreviewFragment : Fragment() {
             // 1. 녹화 시작 플래그 대기 및 첫 프레임 처리 보장
             cvRecordingStarted.block()
             encoder.waitForFirstFrame()
-            originalencoder.waitForFirstFrame()
+            if (!isSinglePipelineMode()) {
+                originalencoder.waitForFirstFrame()
+            }
 
             // 2. 세션 중지 및 종료 (안전하게)
             withContext(Dispatchers.Main) {
@@ -2012,11 +2059,17 @@ class CustomPreviewFragment : Fragment() {
 
 
             // 9. 인코더 shutdown (동기적으로 안전하게 수행)
-            originalencoder.shutdown()
+            if (!isSinglePipelineMode()) {
+                originalencoder.shutdown()
+            }
             encoder.shutdown()
 
             // 🔟 shutdown 이후 MediaScanner에 등록 (갤러리 표시용)
-            val outputFiles = listOf(encoder.outputFile, originalencoder.outputFile)
+            val outputFiles = if (isSinglePipelineMode()) {
+                listOf(encoder.outputFile)
+            } else {
+                listOf(encoder.outputFile, originalencoder.outputFile)
+            }
             MediaScannerConnection.scanFile(
                 requireContext(),
                 outputFiles.map { it.absolutePath }.toTypedArray(),
@@ -2067,7 +2120,8 @@ class CustomPreviewFragment : Fragment() {
                     }
                     
                     // 🎥 녹화 종료 시 렌즈 선택 버튼과 사진 모드 버튼 다시 보이기
-                    binding.lensSelector.visibility = View.VISIBLE
+                    binding.lensSelector.visibility =
+                        if (binding.zoomModeOverlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                     try {
                         requireView().findViewById<View>(R.id.btn_mode_photo)?.visibility = View.VISIBLE
                     } catch (e: Exception) {
@@ -2204,12 +2258,22 @@ class CustomPreviewFragment : Fragment() {
 
     // ================== HUD 표시 ==================
     private fun showZoomHUD(text: String) {
+        if (fragmentBinding.zoomModeOverlay.visibility == View.VISIBLE) {
+            fragmentBinding.zoomLevelText.visibility = View.GONE
+            fragmentBinding.lensSelector.visibility = View.GONE
+            return
+        }
         fragmentBinding.zoomLevelText.text = text
         fragmentBinding.zoomLevelText.visibility = View.VISIBLE
         fragmentBinding.lensSelector.visibility = View.GONE
     }
 
     private fun showLensHUD() {
+        if (fragmentBinding.zoomModeOverlay.visibility == View.VISIBLE) {
+            fragmentBinding.zoomLevelText.visibility = View.GONE
+            fragmentBinding.lensSelector.visibility = View.GONE
+            return
+        }
         fragmentBinding.zoomLevelText.visibility = View.GONE
         fragmentBinding.lensSelector.visibility = View.VISIBLE
     }
@@ -2648,7 +2712,7 @@ class CustomPreviewFragment : Fragment() {
             }
             
             try {
-                if (originalencoderSurface.isValid) {
+                if (!isSinglePipelineMode() && originalencoderSurface.isValid) {
                     originalencoderSurface.release()
                     Log.d(TAG, "✅ originalencoderSurface release 완료")
                 } else {

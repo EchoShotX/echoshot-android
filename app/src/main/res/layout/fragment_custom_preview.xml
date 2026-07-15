@@ -20,6 +20,7 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/fullratio"
+            android:visibility="gone"
             android:contentDescription="Fullratio" />
 
         <!-- 중간 여백 -->
@@ -39,6 +40,7 @@
             android:textSize="18sp"
             android:textStyle="bold"
             android:background="?attr/selectableItemBackgroundBorderless"
+            android:visibility="gone"
             android:contentDescription="Zoom crop mode" />
 
         <!-- 중간 여백 -->
@@ -61,13 +63,17 @@
             android:layout_weight="1" />
 
         <!-- 오른쪽 아이콘 -->
-        <ImageView
+        <TextView
             android:id="@+id/icon_setting"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@drawable/setting"
-            app:tint="@android:color/white"
-            android:contentDescription="Setting" />
+            android:layout_width="40dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="C"
+            android:textColor="@android:color/white"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Zoom crop mode" />
     </LinearLayout>
 
 
@@ -305,7 +311,7 @@
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="220dp"
+                android:layout_height="244dp"
                 android:baselineAligned="false"
                 android:orientation="horizontal">
 
@@ -313,7 +319,7 @@
                     android:id="@+id/zoom_mode_default"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
-                    android:layout_marginEnd="6dp"
+                    android:layout_marginEnd="12dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:orientation="vertical"
@@ -326,12 +332,13 @@
                         android:src="@drawable/zoom_mode_default" />
 
                     <TextView
-                        android:layout_width="112dp"
-                        android:layout_height="32dp"
+                        android:layout_width="136dp"
+                        android:layout_height="52dp"
                         android:gravity="center"
-                        android:text="Default Zoom"
+                        android:maxLines="2"
+                        android:text="Single Record"
                         android:textColor="@android:color/white"
-                        android:textSize="13sp"
+                        android:textSize="12sp"
                         android:textStyle="bold" />
                 </LinearLayout>
 
@@ -339,7 +346,7 @@
                     android:id="@+id/zoom_mode_center"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
-                    android:layout_marginStart="6dp"
+                    android:layout_marginStart="12dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:orientation="vertical"
@@ -352,20 +359,21 @@
                         android:src="@drawable/zoom_mode_center" />
 
                     <TextView
-                        android:layout_width="112dp"
-                        android:layout_height="32dp"
+                        android:layout_width="136dp"
+                        android:layout_height="52dp"
                         android:gravity="center"
-                        android:text="Center Zoom"
+                        android:maxLines="2"
+                        android:text="Center Zoom&#10;Dual Record"
                         android:textColor="@android:color/white"
-                        android:textSize="13sp"
+                        android:textSize="12sp"
                         android:textStyle="bold" />
                 </LinearLayout>
             </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="220dp"
-                android:layout_marginTop="12dp"
+                android:layout_height="244dp"
+                android:layout_marginTop="20dp"
                 android:baselineAligned="false"
                 android:orientation="horizontal">
 
@@ -373,7 +381,7 @@
                     android:id="@+id/zoom_mode_bottom"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
-                    android:layout_marginEnd="6dp"
+                    android:layout_marginEnd="12dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:orientation="vertical"
@@ -386,12 +394,13 @@
                         android:src="@drawable/zoom_mode_bottom" />
 
                     <TextView
-                        android:layout_width="112dp"
-                        android:layout_height="32dp"
+                        android:layout_width="136dp"
+                        android:layout_height="52dp"
                         android:gravity="center"
-                        android:text="Bottom Zoom"
+                        android:maxLines="2"
+                        android:text="Bottom Zoom&#10;Dual Record"
                         android:textColor="@android:color/white"
-                        android:textSize="13sp"
+                        android:textSize="12sp"
                         android:textStyle="bold" />
                 </LinearLayout>
 
@@ -399,7 +408,7 @@
                     android:id="@+id/zoom_mode_top"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
-                    android:layout_marginStart="6dp"
+                    android:layout_marginStart="12dp"
                     android:layout_weight="1"
                     android:gravity="center"
                     android:orientation="vertical"
@@ -412,12 +421,13 @@
                         android:src="@drawable/zoom_mode_top" />
 
                     <TextView
-                        android:layout_width="112dp"
-                        android:layout_height="32dp"
+                        android:layout_width="136dp"
+                        android:layout_height="52dp"
                         android:gravity="center"
-                        android:text="Top Zoom"
+                        android:maxLines="2"
+                        android:text="Top Zoom&#10;Dual Record"
                         android:textColor="@android:color/white"
-                        android:textSize="13sp"
+                        android:textSize="12sp"
                         android:textStyle="bold" />
                 </LinearLayout>
             </LinearLayout>
